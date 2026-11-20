@@ -1,6 +1,13 @@
 package com.aistudio.nfcshield.data.remote
 
+import com.aistudio.nfcshield.BuildConfig
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.text.DateFormat
+import java.util.Date
 
 /** Result of proactively refreshing both credentials Firestore depends on. */
 data class CredentialRefreshResult(
@@ -31,7 +38,8 @@ enum class AppCheckFailureKind {
         } else {
             "App Check 配置被拒绝"
         }
-        PLAY_INTEGRITY_FAILED -> "Play Integrity 证明失败（设备环境或 Play 服务异常）"
+        PLAY_INTEGRITY_FAILED ->
+            "Play Integrity 证明失败（设备完整性未通过，或侧载安装的签名/来源不被 Play 认可）"
         NETWORK -> "App Check 网络请求超时或不可达"
         CONFIGURATION -> "App Check 配置错误（应用未注册或提供商不可用）"
         UNKNOWN -> "App Check 校验失败（未知原因）"
@@ -51,7 +59,8 @@ data class SyncDiagnosticReport(
     val networkAvailable: Boolean,
     val firestoreCode: String?,
     val capturedAtMillis: Long,
-    val debugTokenInfo: AppCheckDebugTokenInfo? = null
+    val debugTokenInfo: AppCheckDebugTokenInfo? = null,
+    val debugBuild: Boolean = false
 ) {
     val hasFailure: Boolean
         get() = authStatus == SyncProbeStatus.FAILED ||
@@ -61,7 +70,8 @@ data class SyncDiagnosticReport(
 
 fun CredentialRefreshResult.toSyncDiagnosticReport(
     firestoreCode: String? = null,
-    debugTokenInfo: AppCheckDebugTokenInfo? = null
+    debugTokenInfo: AppCheckDebugTokenInfo? = null,
+    debugBuild: Boolean = BuildConfig.DEBUG
 ): SyncDiagnosticReport = SyncDiagnosticReport(
     authStatus = if (authOk) SyncProbeStatus.OK else SyncProbeStatus.FAILED,
     authDetail = authError,
@@ -71,8 +81,28 @@ fun CredentialRefreshResult.toSyncDiagnosticReport(
     networkAvailable = networkAvailable,
     firestoreCode = firestoreCode,
     capturedAtMillis = capturedAtMillis,
-    debugTokenInfo = debugTokenInfo
+    debugTokenInfo = debugTokenInfo,
+    debugBuild = debugBuild
 )
+
+/** Support-friendly report text (never includes the debug token value). */
+fun SyncDiagnosticReport.toDiagnosticText(): String = buildString {
+    appendLine("盾匙 NFC 云端同步诊断")
+    appendLine("构建: ${if (debugBuild) "Debug / App Check Debug Provider" else "Release / Play Integrity"}")
+    appendLine("Auth: ${statusLabel(authStatus)}${authDetail?.let { " ($it)" }.orEmpty()}")
+    appendLine("App Check: ${statusLabel(appCheckStatus)} [${appCheckFailure.name}]")
+    appCheckDetail?.takeIf { it.isNotBlank() }?.let { appendLine("  detail: $it") }
+    appendLine("网络: ${if (networkAvailable) "可用" else "不可用"}")
+    firestoreCode?.let { appendLine("Firestore: $it") }
+    appendLine(
+        "时间: " + runCatching {
+            DateFormat.getDateTimeInstance().format(Date(capturedAtMillis))
+        }.getOrDefault(capturedAtMillis.toString())
+    )
+}
+
+private fun statusLabel(status: SyncProbeStatus): String =
+    if (status == SyncProbeStatus.OK) "正常" else "受限"
 
 /**
  * Firebase App Check 20.x does not expose a typed exception (no FirebaseAppCheckException
@@ -86,17 +116,27 @@ fun classifyAppCheckFailure(error: Throwable?, debugBuild: Boolean): AppCheckFai
     return when {
         text.contains("debug token") || text.contains("debugtoken") || text.contains("debug_token") ->
             AppCheckFailureKind.DEBUG_TOKEN_UNREGISTERED
-        text.contains("play integrity") || text.contains("playintegrity") ->
+        // "IntegrityServiceException", "-10006: Integrity API error", standard-request and
+        // Play-recognition errors all indicate the Play Integrity path, not the network.
+        text.contains("integrity") || text.contains("-1000") ||
+            text.contains("not installed by play") || text.contains("app not recognized") ||
+            text.contains("unrecognized_version") || text.contains("play_recognized") ->
             AppCheckFailureKind.PLAY_INTEGRITY_FAILED
+        debugBuild && text.contains("code: 403") ->
+            AppCheckFailureKind.DEBUG_TOKEN_UNREGISTERED
         text.contains("timeout") || text.contains("timed out") ||
             text.contains("unable to resolve host") || text.contains("network") ||
             text.contains("socket") || text.contains("connect") ||
-            chain.any { it is IOException } -> AppCheckFailureKind.NETWORK
-        text.contains("configuration") || text.contains("provider") ||
+            Regex("code: (429|5\\d\\d)").containsMatchIn(text) ||
+            chain.any {
+                it is SocketTimeoutException || it is UnknownHostException ||
+                    it is ConnectException || it is SocketException
+            } -> AppCheckFailureKind.NETWORK
+        text.contains("code: 403") ||
+            text.contains("configuration") || text.contains("provider") ||
             text.contains("api key") || text.contains("not installed") ||
             text.contains("permission") || text.contains("forbidden") ||
             text.contains("unauthorized") -> AppCheckFailureKind.CONFIGURATION
-        debugBuild && text.contains("403") -> AppCheckFailureKind.DEBUG_TOKEN_UNREGISTERED
         else -> AppCheckFailureKind.UNKNOWN
     }
 }

@@ -110,7 +110,10 @@ class FirestoreVaultRepository(
             throw e
         } catch (e: Exception) {
             appCheckFailure = classifyAppCheckFailure(e, BuildConfig.DEBUG)
-            appCheckError = e.message
+            appCheckError = buildString {
+                append(e.javaClass.simpleName)
+                e.message?.take(300)?.let { append(": ").append(it) }
+            }
             Log.w(
                 SYNC_LOG_TAG,
                 "App Check token refresh failed (forceRefresh=$forceRefresh, kind=$appCheckFailure, type=${e.javaClass.simpleName})"
