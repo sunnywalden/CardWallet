@@ -4,7 +4,10 @@ import com.aistudio.nfcshield.data.model.CardAccentColor
 import com.aistudio.nfcshield.data.model.CardCategory
 import com.aistudio.nfcshield.data.model.NfcTechType
 import com.aistudio.nfcshield.data.remote.VALID_DOC_ID_REGEX
+import com.aistudio.nfcshield.data.remote.buildCardSaveLogMessage
 import com.aistudio.nfcshield.data.remote.buildRedactedCardDiagnostic
+import com.aistudio.nfcshield.data.remote.hashUidPrefix
+import com.aistudio.nfcshield.data.remote.redactUidInPath
 import com.aistudio.nfcshield.data.remote.validateCardWriteFields
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -130,5 +133,58 @@ class CardWriteDiagnosticsTest {
         assertTrue(summary.contains("cryptoVersion=2"))
         assertTrue(summary.contains("emulationCount=0"))
         assertTrue(summary.contains("deactivateCount=1"))
+    }
+
+    @Test
+    fun redactUidInPath_replacesRawUidWithHashAndKeepsStructure() {
+        val rawUid = "sensitive-firebase-uid-9999"
+        val redacted = redactUidInPath("users/$rawUid/cards/card123", rawUid, rawUid)
+
+        assertFalse("Raw Firebase UID must never appear in paths", redacted.contains(rawUid))
+        assertTrue(redacted.contains(hashUidPrefix(rawUid)))
+        assertTrue(redacted.endsWith("/cards/card123"))
+    }
+
+    @Test
+    fun redactUidInPath_fallsBackToAuthUidAndLeavesUidFreePathsAlone() {
+        val rawUid = "sensitive-firebase-uid-9999"
+
+        assertEquals(
+            "users/${hashUidPrefix(rawUid)}/cards",
+            redactUidInPath("users/$rawUid/cards", expectedUserId = "", authUid = rawUid)
+        )
+        // Nothing to redact: the path carries no identifier (e.g. early validation failures).
+        assertEquals(
+            "users/unknown/cards",
+            redactUidInPath("users/unknown/cards", expectedUserId = "  ", authUid = null)
+        )
+    }
+
+    @Test
+    fun cardSaveLogMessage_neverLogsRawUidAndOnlyIncludesMessageInDebug() {
+        val rawUid = "sensitive-firebase-uid-9999"
+        val redactedPath = redactUidInPath("users/$rawUid/cards", rawUid, rawUid)
+
+        val release = buildCardSaveLogMessage(
+            codeName = "PERMISSION_DENIED",
+            path = redactedPath,
+            summary = "op=createCard, cardId=(auto)",
+            exceptionMessage = "raw failure mentioning users/$rawUid",
+            isDebug = false
+        )
+        assertFalse("Raw UID must not leak through the path", release.contains(rawUid))
+        assertFalse("release builds must not log raw exception messages", release.contains("raw failure"))
+        assertTrue(release.contains("code=PERMISSION_DENIED"))
+        assertTrue(release.contains(hashUidPrefix(rawUid)))
+
+        val debug = buildCardSaveLogMessage(
+            codeName = "PERMISSION_DENIED",
+            path = redactedPath,
+            summary = "op=createCard, cardId=(auto)",
+            exceptionMessage = "boom",
+            isDebug = true
+        )
+        assertTrue(debug.contains("message=boom"))
+        assertFalse(debug.contains(rawUid))
     }
 }
