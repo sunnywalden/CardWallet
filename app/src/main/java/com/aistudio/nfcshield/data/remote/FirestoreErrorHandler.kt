@@ -6,7 +6,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
-import java.security.MessageDigest
 
 enum class OperationType(val value: String) {
     CREATE("create"),
@@ -35,17 +34,16 @@ fun handleFirestoreError(
         ?: exception
 
     val firestoreCode = (rootError as? FirebaseFirestoreException)?.code
-    val uidHash = FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
-        MessageDigest.getInstance("SHA-256")
-            .digest(uid.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-            .take(12)
-    }
+    val authUid = FirebaseAuth.getInstance().currentUser?.uid
+    val uidHash = authUid?.let(::hashUidPrefix)
+    // The path embeds the raw Firebase UID; replace it with the same truncated hash so the
+    // account identifier never reaches logcat (threat model T7).
+    val safePath = path?.let { redactUidInPath(it, authUid ?: "", authUid) }
 
     val errorInfoJson = JSONObject().apply {
         put("errorCode", firestoreCode?.name ?: rootError.javaClass.simpleName)
         put("operationType", operationType.value)
-        put("path", path)
+        put("path", safePath)
         put("uidHash", uidHash)
         if (BuildConfig.DEBUG) {
             put("message", rootError.message ?: rootError.toString())

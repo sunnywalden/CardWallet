@@ -1,6 +1,7 @@
 package com.aistudio.nfcshield.data.remote
 
 import android.util.Log
+import com.aistudio.nfcshield.BuildConfig
 import com.aistudio.nfcshield.data.model.CardAccentColor
 import com.aistudio.nfcshield.data.model.CardCategory
 import com.aistudio.nfcshield.data.model.NfcTechType
@@ -141,11 +142,43 @@ internal fun logCardSaveException(
         deactivateCount = deactivateCount,
         emulationCount = emulationCount
     )
-    Log.e(
-        CARD_SAVE_LOG_TAG,
-        "NFC card save failed [code=$codeName, path=$path]: $summary | message=${exception.message}",
-        exception
+    val redactedPath = redactUidInPath(path, expectedUserId, authUid)
+    val message = buildCardSaveLogMessage(
+        codeName = codeName,
+        path = redactedPath,
+        summary = summary,
+        exceptionMessage = exception.message,
+        isDebug = BuildConfig.DEBUG
     )
+    // Stack traces and raw exception messages are debug-only, matching FirestoreErrorHandler.
+    if (BuildConfig.DEBUG) {
+        Log.e(CARD_SAVE_LOG_TAG, message, exception)
+    } else {
+        Log.e(CARD_SAVE_LOG_TAG, message)
+    }
+}
+
+/**
+ * Replaces the raw Firebase UID segment of a Firestore path with its truncated SHA-256 hash.
+ * The path must never carry an account identifier into logcat (threat model T7 / H3).
+ */
+internal fun redactUidInPath(path: String, expectedUserId: String, authUid: String?): String {
+    val uid = expectedUserId.takeIf { it.isNotBlank() }
+        ?: authUid?.takeIf { it.isNotBlank() }
+        ?: return path
+    return path.replace(uid, hashUidPrefix(uid))
+}
+
+/** Pure formatter so log redaction can be asserted without a Log backend. */
+internal fun buildCardSaveLogMessage(
+    codeName: String,
+    path: String,
+    summary: String,
+    exceptionMessage: String?,
+    isDebug: Boolean
+): String {
+    val base = "NFC card save failed [code=$codeName, path=$path]: $summary"
+    return if (isDebug) "$base | message=$exceptionMessage" else base
 }
 
 internal fun hashUidPrefix(uid: String): String =
