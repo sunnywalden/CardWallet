@@ -26,14 +26,18 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isValidVaultConfig(data, userId) {
+    // --- Vault config (schema v2 only for writes; v1 docs are upgraded by the client) ---
+    // v2 requires PBKDF2-HMAC-SHA256 with a 120k iteration floor, and the verifier binds
+    // salt/iterations/algorithm, so a session attacker cannot downgrade these parameters.
+    function isValidVaultConfigV2(data, userId) {
       return data.userId is string && data.userId == userId &&
              data.wrappedDekBase64 is string && data.wrappedDekBase64.size() >= 16 && data.wrappedDekBase64.size() <= 512 &&
              data.wrappedDekIvBase64 is string && data.wrappedDekIvBase64.size() >= 8 && data.wrappedDekIvBase64.size() <= 128 &&
              data.kdfSaltBase64 is string && data.kdfSaltBase64.size() >= 8 && data.kdfSaltBase64.size() <= 128 &&
-             data.kdfIterations is int && data.kdfIterations >= 10000 && data.kdfIterations <= 1000000 &&
+             data.kdfIterations is int && data.kdfIterations >= 120000 && data.kdfIterations <= 1000000 &&
+             data.kdfAlgorithm is string && data.kdfAlgorithm == 'PBKDF2WithHmacSHA256' &&
              data.pinVerifierBase64 is string && data.pinVerifierBase64.size() >= 16 && data.pinVerifierBase64.size() <= 256 &&
-             data.schemaVersion is int && data.schemaVersion >= 1 && data.schemaVersion <= 10 &&
+             data.schemaVersion is int && data.schemaVersion == 2 &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -62,6 +66,7 @@ service cloud.firestore {
              data.encryptedPayloadBase64 is string && data.encryptedPayloadBase64.size() >= 16 && data.encryptedPayloadBase64.size() <= 8192 &&
              data.payloadIvBase64 is string && data.payloadIvBase64.size() >= 8 && data.payloadIvBase64.size() <= 64 &&
              data.emulationCount is int && data.emulationCount >= 0 && data.emulationCount <= 1000000 &&
+             (!('cryptoVersion' in data) || (data.cryptoVersion is int && data.cryptoVersion >= 1 && data.cryptoVersion <= 2)) &&
              (!('lastEmulatedAt' in data) || (data.lastEmulatedAt is timestamp && data.lastEmulatedAt <= request.time)) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -73,16 +78,16 @@ service cloud.firestore {
 
       allow create: if isOwner(userId) &&
                        configId == 'config' &&
-                       incoming().keys().hasAll(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'pinVerifierBase64', 'schemaVersion', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'pinVerifierBase64', 'schemaVersion', 'createdAt', 'updatedAt']) &&
-                       isValidVaultConfig(incoming(), userId);
+                       incoming().keys().hasOnly(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'kdfAlgorithm', 'pinVerifierBase64', 'schemaVersion', 'createdAt', 'updatedAt']) &&
+                       isValidVaultConfigV2(incoming(), userId);
 
+      // The only legal transition for a v1 document is a full v2 rewrite.
       allow update: if isOwner(userId) &&
                        configId == 'config' &&
-                       isValidVaultConfig(incoming(), userId) &&
+                       isValidVaultConfigV2(incoming(), userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'pinVerifierBase64', 'schemaVersion', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'kdfAlgorithm', 'pinVerifierBase64', 'schemaVersion', 'updatedAt']);
 
       allow delete: if isOwner(userId) && configId == 'config';
     }
@@ -93,18 +98,23 @@ service cloud.firestore {
 
       allow create: if isOwner(userId) &&
                        isValidId(cardId) &&
-                       incoming().keys().hasAll(['userId', 'label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'emulationCount', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'emulationCount', 'lastEmulatedAt', 'createdAt', 'updatedAt']) &&
-                       isValidAccessCard(incoming(), userId);
+                       incoming().keys().hasOnly(['userId', 'label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'cryptoVersion', 'emulationCount', 'lastEmulatedAt', 'createdAt', 'updatedAt']) &&
+                       isValidAccessCard(incoming(), userId) &&
+                       incoming().cryptoVersion == 2;
 
       allow update: if isOwner(userId) &&
                        isValidId(cardId) &&
                        isValidAccessCard(incoming(), userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt && (
-                         incoming().diff(existing()).affectedKeys().hasOnly(['label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'updatedAt']) ||
+                         // Full content edit; cryptoVersion may only move forward (v1 -> v2 migration).
+                         (incoming().diff(existing()).affectedKeys().hasOnly(['label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'cryptoVersion', 'updatedAt']) &&
+                          incoming().cryptoVersion >= existing().get('cryptoVersion', 1)) ||
+                         // HCE slot switch only.
                          incoming().diff(existing()).affectedKeys().hasOnly(['activeHce', 'updatedAt']) ||
-                         incoming().diff(existing()).affectedKeys().hasOnly(['emulationCount', 'lastEmulatedAt', 'updatedAt'])
+                         // Emulation counter: strictly atomic +1.
+                         (incoming().diff(existing()).affectedKeys().hasOnly(['emulationCount', 'lastEmulatedAt', 'updatedAt']) &&
+                          incoming().emulationCount == existing().emulationCount + 1)
                        );
 
       allow delete: if isOwner(userId) && isValidId(cardId);

@@ -22,8 +22,9 @@ function validVaultConfig(userId) {
     wrappedDekIvBase64: "MTIzNDU2Nzg5MDEy",
     kdfSaltBase64: "c2FsdF9iYXNlNjRfdGVzdA==",
     kdfIterations: 120000,
+    kdfAlgorithm: "PBKDF2WithHmacSHA256",
     pinVerifierBase64: "cGluX3ZlcmlmaWVyX2Jhc2U2NA==",
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt: past,
     updatedAt: past,
   };
@@ -42,6 +43,7 @@ function validCard(userId) {
     activeHce: false,
     encryptedPayloadBase64: "ZW5jcnlwdGVkX2NhcmRfcGF5bG9hZF9hZXNfZ2Nt",
     payloadIvBase64: "MTIzNDU2Nzg5MDEy",
+    cryptoVersion: 2,
     emulationCount: 0,
     createdAt: past,
     updatedAt: past,
@@ -217,6 +219,114 @@ test("Access cards: rejects cross-user access, @DocumentId id injection, invalid
     aliceDb.collection("users").doc(ALICE_UID).collection("cards").doc("long_label").set({
       ...validCard(ALICE_UID),
       label: "A".repeat(41),
+    })
+  );
+});
+
+test("Vault config v2: downgraded KDF parameters and legacy schema writes are rejected", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cfgRef = aliceDb.collection("users").doc(ALICE_UID).collection("vault").doc("config");
+
+  await assertSucceeds(cfgRef.set(validVaultConfig(ALICE_UID)));
+
+  // Iteration floor: a session attacker cannot weaken the KDF.
+  await assertFails(
+    cfgRef.update({
+      kdfIterations: 10000,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // Algorithm downgrade rejected.
+  await assertFails(
+    cfgRef.update({
+      kdfAlgorithm: "PBKDF2WithHmacSHA1",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // v1 documents can no longer be created.
+  const legacyCfg = validVaultConfig(ALICE_UID);
+  delete legacyCfg.kdfAlgorithm;
+  legacyCfg.schemaVersion = 1;
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("vault").doc("legacy_cfg").set(legacyCfg)
+  );
+});
+
+test("Vault config migration: a seeded v1 document can only be rewritten as full v2", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cfgRef = aliceDb.collection("users").doc(ALICE_UID).collection("vault").doc("config");
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const past = new Date(Date.now() - 2000);
+    await ctx.firestore().collection("users").doc(ALICE_UID).collection("vault").doc("config").set({
+      userId: ALICE_UID,
+      wrappedDekBase64: "d3JhcHBlZF9kZWtfYmFzZTY0X3Rlc3RfcGF5bG9hZA==",
+      wrappedDekIvBase64: "MTIzNDU2Nzg5MDEy",
+      kdfSaltBase64: "c2FsdF9iYXNlNjRfdGVzdA==",
+      kdfIterations: 120000,
+      pinVerifierBase64: "cGluX3ZlcmlmaWVyX2Jhc2U2NA==",
+      schemaVersion: 1,
+      createdAt: past,
+      updatedAt: past,
+    });
+  });
+
+  const upgraded = validVaultConfig(ALICE_UID);
+  upgraded.createdAt = (await cfgRef.get()).get("createdAt").toDate();
+  await assertSucceeds(cfgRef.set(upgraded));
+});
+
+test("Access cards v2: creation requires cryptoVersion 2 and version never moves backwards", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cardsCol = aliceDb.collection("users").doc(ALICE_UID).collection("cards");
+
+  const legacyCard = validCard(ALICE_UID);
+  delete legacyCard.cryptoVersion;
+  await assertFails(cardsCol.doc("legacy_create").set(legacyCard));
+  await assertFails(
+    cardsCol.doc("legacy_create_1").set({ ...validCard(ALICE_UID), cryptoVersion: 1 })
+  );
+
+  await assertSucceeds(cardsCol.doc("card_v2").set(validCard(ALICE_UID)));
+
+  // Downgrade v2 -> v1 rejected.
+  await assertFails(
+    cardsCol.doc("card_v2").update({
+      cryptoVersion: 1,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+});
+
+test("Access cards: emulation counter only accepts an atomic +1 increment", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cardRef = aliceDb.collection("users").doc(ALICE_UID).collection("cards").doc("counter_card");
+  await assertSucceeds(cardRef.set(validCard(ALICE_UID)));
+
+  await assertSucceeds(
+    cardRef.update({
+      emulationCount: 1,
+      lastEmulatedAt: new Date(Date.now() - 900),
+      updatedAt: new Date(Date.now() - 900),
+    })
+  );
+
+  // +2 rejected: lost-update / cross-device race must fail loudly.
+  await assertFails(
+    cardRef.update({
+      emulationCount: 3,
+      lastEmulatedAt: new Date(Date.now() - 800),
+      updatedAt: new Date(Date.now() - 800),
+    })
+  );
+
+  await assertSucceeds(
+    cardRef.update({
+      emulationCount: 2,
+      lastEmulatedAt: new Date(Date.now() - 700),
+      updatedAt: new Date(Date.now() - 700),
     })
   );
 });
