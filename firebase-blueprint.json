@@ -25,6 +25,10 @@
           "type": "integer",
           "description": "PBKDF2 iteration count."
         },
+        "kdfAlgorithm": {
+          "type": "string",
+          "description": "Explicit PBKDF2 algorithm identifier (PBKDF2WithHmacSHA256)."
+        },
         "pinVerifierBase64": {
           "type": "string",
           "description": "SHA-256 verifier derived from KEK to validate PIN checks."
@@ -50,6 +54,7 @@
         "wrappedDekIvBase64",
         "kdfSaltBase64",
         "kdfIterations",
+        "kdfAlgorithm",
         "pinVerifierBase64",
         "schemaVersion",
         "createdAt",
@@ -104,6 +109,10 @@
           "type": "string",
           "description": "12-byte AES-GCM IV for encryptedPayloadBase64."
         },
+        "cryptoVersion": {
+          "type": "integer",
+          "description": "Card ciphertext encryption schema version (2 = owner-bound AAD)."
+        },
         "emulationCount": {
           "type": "integer",
           "description": "Number of recorded HCE emulation taps."
@@ -135,6 +144,7 @@
         "activeHce",
         "encryptedPayloadBase64",
         "payloadIvBase64",
+        "cryptoVersion",
         "emulationCount",
         "createdAt",
         "updatedAt"

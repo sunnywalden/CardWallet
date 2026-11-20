@@ -330,3 +330,51 @@ test("Access cards: emulation counter only accepts an atomic +1 increment", asyn
     })
   );
 });
+
+test("Access cards: createCardAndActivate transit card atomically deactivates legacy v1 and null-lastEmulatedAt cards", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cardsCol = aliceDb.collection("users").doc(ALICE_UID).collection("cards");
+  const past = new Date(Date.now() - 5000);
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const col = ctx.firestore().collection("users").doc(ALICE_UID).collection("cards");
+    const legacyV1 = validCard(ALICE_UID);
+    delete legacyV1.cryptoVersion;
+    legacyV1.activeHce = true;
+    legacyV1.createdAt = past;
+    legacyV1.updatedAt = past;
+    await col.doc("legacy_v1_active").set(legacyV1);
+
+    await col.doc("legacy_null_emul").set({
+      ...validCard(ALICE_UID),
+      activeHce: true,
+      lastEmulatedAt: null,
+      createdAt: past,
+      updatedAt: past,
+    });
+  });
+
+  const batch = aliceDb.batch();
+  batch.set(cardsCol.doc("transit_changantong"), {
+    ...validCard(ALICE_UID),
+    label: "长安通",
+    category: "TRANSIT",
+    accentColor: "ROSE",
+    primaryTech: "ISO_DEP",
+    maskedUid: "•••• D7BD",
+    hceSupported: true,
+    activeHce: true,
+    cryptoVersion: 2,
+  });
+  batch.update(cardsCol.doc("legacy_v1_active"), {
+    activeHce: false,
+    updatedAt: new Date(Date.now() - 500),
+  });
+  batch.update(cardsCol.doc("legacy_null_emul"), {
+    activeHce: false,
+    updatedAt: new Date(Date.now() - 500),
+  });
+
+  await assertSucceeds(batch.commit());
+});
+

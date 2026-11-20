@@ -67,7 +67,7 @@ service cloud.firestore {
              data.payloadIvBase64 is string && data.payloadIvBase64.size() >= 8 && data.payloadIvBase64.size() <= 64 &&
              data.emulationCount is int && data.emulationCount >= 0 && data.emulationCount <= 1000000 &&
              (!('cryptoVersion' in data) || (data.cryptoVersion is int && data.cryptoVersion >= 1 && data.cryptoVersion <= 2)) &&
-             (!('lastEmulatedAt' in data) || (data.lastEmulatedAt is timestamp && data.lastEmulatedAt <= request.time)) &&
+             (!('lastEmulatedAt' in data) || data.lastEmulatedAt == null || (data.lastEmulatedAt is timestamp && data.lastEmulatedAt <= request.time)) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -107,14 +107,14 @@ service cloud.firestore {
                        isValidAccessCard(incoming(), userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt && (
-                         // Full content edit; cryptoVersion may only move forward (v1 -> v2 migration).
-                         (incoming().diff(existing()).affectedKeys().hasOnly(['label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'cryptoVersion', 'updatedAt']) &&
-                          incoming().cryptoVersion >= existing().get('cryptoVersion', 1)) ||
-                         // HCE slot switch only.
+                         // HCE slot switch only (checked first so v1 cards without cryptoVersion never error).
                          incoming().diff(existing()).affectedKeys().hasOnly(['activeHce', 'updatedAt']) ||
                          // Emulation counter: strictly atomic +1.
                          (incoming().diff(existing()).affectedKeys().hasOnly(['emulationCount', 'lastEmulatedAt', 'updatedAt']) &&
-                          incoming().emulationCount == existing().emulationCount + 1)
+                          incoming().emulationCount == existing().emulationCount + 1) ||
+                         // Full content edit; cryptoVersion may only move forward (v1 -> v2 migration).
+                         (incoming().diff(existing()).affectedKeys().hasOnly(['label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'cryptoVersion', 'updatedAt']) &&
+                          incoming().get('cryptoVersion', 1) >= existing().get('cryptoVersion', 1))
                        );
 
       allow delete: if isOwner(userId) && isValidId(cardId);
