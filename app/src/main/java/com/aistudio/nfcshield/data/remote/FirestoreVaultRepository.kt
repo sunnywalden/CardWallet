@@ -81,6 +81,10 @@ class FirestoreVaultRepository(
         return try {
             val uid = requireUserId(userId)
             val docRef = db.collection("users").document(uid).collection("vault").document("config")
+            val bindingFields = wrapped.deviceBinding
+                ?.takeIf { it.isNotBlank() }
+                ?.let { mapOf("deviceBinding" to it) }
+                .orEmpty()
             if (isUpdate) {
                 docRef.update(
                     mapOf(
@@ -92,7 +96,7 @@ class FirestoreVaultRepository(
                         "kdfAlgorithm" to wrapped.kdfAlgorithm,
                         "schemaVersion" to wrapped.schemaVersion.toLong(),
                         "updatedAt" to FieldValue.serverTimestamp()
-                    )
+                    ) + bindingFields
                 ).await()
             } else {
                 docRef.set(
@@ -107,7 +111,7 @@ class FirestoreVaultRepository(
                         "schemaVersion" to wrapped.schemaVersion.toLong(),
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
-                    )
+                    ) + bindingFields
                 ).await()
             }
             Result.success(Unit)

@@ -29,7 +29,11 @@ object Aes256GcmCryptoUtil {
 
     const val CARD_AAD_PREFIX = "shield-nfc:card:v2:"
     const val CURRENT_CRYPTO_VERSION = 2
-    val KNOWN_CRYPTO_VERSIONS = setOf(1, 2)
+    /**
+     * v1 (no-AAD) read support was removed on 2026-11-20 after the live audit confirmed
+     * 100% of stored cards are v2. Unknown versions fail closed.
+     */
+    val KNOWN_CRYPTO_VERSIONS = setOf(CURRENT_CRYPTO_VERSION)
     private val secureRandom = SecureRandom()
 
     data class CipherPayload(
@@ -151,11 +155,8 @@ object Aes256GcmCryptoUtil {
     }
 
     /**
-     * Decrypts a Firestore NFC card ciphertext. The crypto version of the record selects the
-     * AAD policy explicitly; there is no blind fallback, so a tampered or transplanted v2
-     * record fails authentication instead of silently retrying without AAD.
-     *
-     * v1 = legacy ciphertext without AAD (migrated on unlock), v2+ = owner-bound AAD.
+     * Decrypts a Firestore NFC card ciphertext. Only v2 (owner-bound AAD) exists; a record
+     * with any other version fails closed — no blind fallback and no unsalted-AAD path.
      */
     fun decryptNfcCardPayload(
         dek256: ByteArray,
@@ -167,12 +168,11 @@ object Aes256GcmCryptoUtil {
         require(cryptoVersion in KNOWN_CRYPTO_VERSIONS) {
             "Unsupported crypto version: $cryptoVersion"
         }
-        val aad = if (cryptoVersion >= 2) buildCardAad(ownerUserId) else null
         val json = decryptUtf8(
             key256 = dek256,
             ciphertextBase64 = encryptedBase64,
             ivBase64 = ivBase64,
-            associatedData = aad
+            associatedData = buildCardAad(ownerUserId)
         )
         return CardSecretsPayload.fromJsonString(json)
     }

@@ -2,6 +2,8 @@ package com.aistudio.nfcshield
 
 import androidx.test.core.app.ApplicationProvider
 import com.aistudio.nfcshield.crypto.Aes256GcmCryptoUtil
+import com.aistudio.nfcshield.crypto.DeviceKeySealer
+import com.aistudio.nfcshield.crypto.DeviceSealedPayload
 import com.aistudio.nfcshield.crypto.VaultCryptoEngine
 import com.aistudio.nfcshield.data.model.ActiveHceCardConfig
 import com.aistudio.nfcshield.data.model.CardSecretsPayload
@@ -19,14 +21,56 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/** In-memory stand-in for the TEE-backed device key (Robolectric has no AndroidKeyStore). */
+object TestDeviceKeySealer : DeviceKeySealer {
+    private var key: SecretKey? = null
+
+    fun reset() { key = null }
+
+    override fun hasKey(): Boolean = key != null
+
+    override fun seal(plaintext: ByteArray): DeviceSealedPayload? = runCatching {
+        val k = key ?: KeyGenerator.getInstance("AES").apply { init(256) }
+            .generateKey().also { key = it }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, k)
+        DeviceSealedPayload(
+            cipherBase64 = android.util.Base64.encodeToString(cipher.doFinal(plaintext), android.util.Base64.NO_WRAP),
+            ivBase64 = android.util.Base64.encodeToString(cipher.iv, android.util.Base64.NO_WRAP)
+        )
+    }.getOrNull()
+
+    override fun unseal(cipherBase64: String, ivBase64: String): ByteArray? = runCatching {
+        val k = key ?: return null
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            k,
+            GCMParameterSpec(128, android.util.Base64.decode(ivBase64, android.util.Base64.NO_WRAP))
+        )
+        cipher.doFinal(android.util.Base64.decode(cipherBase64, android.util.Base64.NO_WRAP))
+    }.getOrNull()
+}
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class VaultCryptoAndNfcTest {
+
+    @Before
+    fun installTestDeviceSealer() {
+        TestDeviceKeySealer.reset()
+        VaultCryptoEngine.deviceKeySealer = TestDeviceKeySealer
+    }
 
     @Test
     fun `pbkdf2 wrap and unwrap dek roundtrip succeeds with correct pin and fails with wrong pin`() {

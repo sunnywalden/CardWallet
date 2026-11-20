@@ -4,6 +4,8 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aistudio.nfcshield.crypto.Aes256GcmCryptoUtil
+import com.aistudio.nfcshield.crypto.DekUnwrapResult
 import com.aistudio.nfcshield.crypto.VaultCryptoEngine
 import com.aistudio.nfcshield.crypto.WrappedDekPayload
 import com.aistudio.nfcshield.data.local.LocalSecurityPreferences
@@ -263,7 +265,8 @@ class VaultViewModel(
                 cryptoVersion = doc.cryptoVersion.toInt()
             )
         }
-        val unsupportedVersion = doc.cryptoVersion.toInt() !in setOf(1, 2)
+        val unsupportedVersion =
+            doc.cryptoVersion.toInt() != Aes256GcmCryptoUtil.CURRENT_CRYPTO_VERSION
         return DecryptedAccessCard(
             id = doc.id,
             label = doc.label,
@@ -377,29 +380,32 @@ class VaultViewModel(
                     return@launch
                 }
 
-                val wrapped = WrappedDekPayload(
-                    wrappedDekBase64 = config.wrappedDekBase64,
-                    wrappedDekIvBase64 = config.wrappedDekIvBase64,
-                    kdfSaltBase64 = config.kdfSaltBase64,
-                    kdfIterations = config.kdfIterations.toInt(),
-                    pinVerifierBase64 = config.pinVerifierBase64,
-                    kdfAlgorithm = config.kdfAlgorithm,
-                    schemaVersion = config.schemaVersion.toInt()
-                )
-                val dek = withContext(Dispatchers.Default) {
-                    VaultCryptoEngine.unwrapDekWithPin(pin.toCharArray(), wrapped)
+                val wrapped = config.toWrappedPayload()
+                val result = withContext(Dispatchers.Default) {
+                    VaultCryptoEngine.unwrapDekResult(pin.toCharArray(), wrapped)
                 }
-                if (dek != null) {
-                    _failedAttempts.value = 0
-                    _pinError.value = null
-                    localStore.clearPinLockoutState()
-                    _dekState.value = dek
-                    HceRuntimeBus.setVaultUnlocked(true)
-                    trySealForBiometric(dek)
-                    upgradeVaultConfigIfNeeded(wrapped, dek, pin)
-                    migrateLegacyCards(dek)
-                } else {
-                    onPinAttemptFailed()
+                when (result) {
+                    is DekUnwrapResult.Success -> {
+                        val dek = result.dek
+                        _failedAttempts.value = 0
+                        _pinError.value = null
+                        localStore.clearPinLockoutState()
+                        _dekState.value = dek
+                        HceRuntimeBus.setVaultUnlocked(true)
+                        trySealForBiometric(dek)
+                        upgradeVaultToDeviceBindingIfNeeded(wrapped, dek, pin)
+                    }
+                    DekUnwrapResult.WrongPin -> onPinAttemptFailed()
+                    DekUnwrapResult.DeviceBindingUnavailable -> {
+                        _pinError.value =
+                            "此保险库已绑定创建时的设备硬件密钥，本设备无法解锁（不存在仅凭 PIN 的跨设备恢复途径）"
+                    }
+                    DekUnwrapResult.DeviceBindingCorrupt -> {
+                        _pinError.value = "设备硬件密钥已变更或保险库数据受损，无法解锁"
+                    }
+                    DekUnwrapResult.UnsupportedFormat -> {
+                        _pinError.value = "保险库数据版本不受支持，请升级应用"
+                    }
                 }
             } finally {
                 _isUnlockBusy.value = false
@@ -408,64 +414,27 @@ class VaultViewModel(
     }
 
     /**
-     * Transparent KDF migration: legacy v1 configs (SHA-1 or v1 verifier) are re-wrapped
-     * with SHA-256 + verifier v2 after a successful unlock. Failure is non-fatal.
+     * Transparent device-binding migration: a successfully unlocked v2 vault is re-wrapped
+     * as v3 (inner PIN payload sealed under the device key) and synced. Failure is non-fatal
+     * and retried on the next unlock — the vault stays usable, just without the extra layer.
+     *
+     * v1 vaults are no longer readable (evicted after the 2026-11-20 live audit).
      */
-    private suspend fun upgradeVaultConfigIfNeeded(
+    private suspend fun upgradeVaultToDeviceBindingIfNeeded(
         wrapped: WrappedDekPayload,
         dek: ByteArray,
         pin: String
     ) {
-        if (!VaultCryptoEngine.needsKdfUpgrade(wrapped)) return
+        if (!VaultCryptoEngine.needsVaultUpgrade(wrapped)) return
         runCatching {
             val upgraded = withContext(Dispatchers.Default) {
                 VaultCryptoEngine.wrapDekWithPin(dek, pin.toCharArray())
             }
-            repository.saveVaultConfig(currentUserId, upgraded, isUpdate = true)
+            repository.saveVaultConfig(currentUserId, upgraded, isUpdate = true).getOrThrow()
+            _statusMessage.value =
+                "保险库已升级为设备密钥绑定：云端数据此后仅能在本机解锁，请勿卸载应用"
         }.onFailure {
-            Log.w(TAG, "vault KDF upgrade deferred", it)
-        }
-    }
-
-    /**
-     * Re-encrypts legacy (no-AAD) card payloads with the owner-bound AAD once the DEK is
-     * available. Best-effort: failures are retried on the next unlock.
-     */
-    private fun migrateLegacyCards(dek: ByteArray) {
-        viewModelScope.launch {
-            val docs = (encryptedCardsStream.value as? UiState.Success)?.data.orEmpty()
-            docs.filter { it.cryptoVersion < 2 }.forEach { doc ->
-                runCatching {
-                    val secrets = VaultCryptoEngine.decryptCardSecrets(
-                        dek = dek,
-                        encryptedBase64 = doc.encryptedPayloadBase64,
-                        ivBase64 = doc.payloadIvBase64,
-                        ownerUserId = currentUserId,
-                        cryptoVersion = 1
-                    )
-                    val enc = VaultCryptoEngine.encryptCardSecrets(
-                        dek = dek,
-                        payload = secrets,
-                        ownerUserId = currentUserId
-                    )
-                    repository.updateCard(
-                        userId = currentUserId,
-                        cardId = doc.id,
-                        label = doc.label,
-                        category = CardCategory.fromRaw(doc.category),
-                        accentColor = CardAccentColor.fromRaw(doc.accentColor),
-                        primaryTech = NfcTechType.fromRaw(doc.primaryTech),
-                        maskedUid = doc.maskedUid,
-                        hceSupported = doc.hceSupported,
-                        activeHce = doc.activeHce,
-                        encryptedPayloadBase64 = enc.encryptedPayloadBase64,
-                        payloadIvBase64 = enc.payloadIvBase64,
-                        cryptoVersion = 2
-                    ).getOrThrow()
-                }.onFailure {
-                    Log.w(TAG, "legacy card migration deferred for ${doc.id}", it)
-                }
-            }
+            Log.w(TAG, "vault device-binding upgrade deferred", it)
         }
     }
 
@@ -554,7 +523,6 @@ class VaultViewModel(
                     localStore.clearPinLockoutState()
                     _dekState.value = dek
                     HceRuntimeBus.setVaultUnlocked(true)
-                    migrateLegacyCards(dek)
                 } else {
                     localStore.clearBiometricSealedDek()
                     _hasBiometricSealedKey.value = false
@@ -582,7 +550,6 @@ class VaultViewModel(
                     _dekState.value = dek
                     HceRuntimeBus.setVaultUnlocked(true)
                     _statusMessage.value = "旧版设备绑定缓存已解锁，请稍后输入一次 PIN 以升级为认证绑定密钥"
-                    migrateLegacyCards(dek)
                 } else {
                     _hasBiometricSealedKey.value = false
                     _sealMode.value = null
@@ -930,21 +897,28 @@ class VaultViewModel(
         }
         viewModelScope.launch {
             try {
-                val wrappedOld = WrappedDekPayload(
-                    wrappedDekBase64 = cfg.wrappedDekBase64,
-                    wrappedDekIvBase64 = cfg.wrappedDekIvBase64,
-                    kdfSaltBase64 = cfg.kdfSaltBase64,
-                    kdfIterations = cfg.kdfIterations.toInt(),
-                    pinVerifierBase64 = cfg.pinVerifierBase64,
-                    kdfAlgorithm = cfg.kdfAlgorithm,
-                    schemaVersion = cfg.schemaVersion.toInt()
-                )
-                val dek = withContext(Dispatchers.Default) {
-                    VaultCryptoEngine.unwrapDekWithPin(currentPin.toCharArray(), wrappedOld)
+                val wrappedOld = cfg.toWrappedPayload()
+                val result = withContext(Dispatchers.Default) {
+                    VaultCryptoEngine.unwrapDekResult(currentPin.toCharArray(), wrappedOld)
                 }
-                if (dek == null) {
-                    onResult(Result.failure(IllegalArgumentException("原 PIN 码验证失败")))
-                    return@launch
+                val dek = when (result) {
+                    is DekUnwrapResult.Success -> result.dek
+                    DekUnwrapResult.WrongPin -> {
+                        onResult(Result.failure(IllegalArgumentException("原 PIN 码验证失败")))
+                        return@launch
+                    }
+                    DekUnwrapResult.DeviceBindingUnavailable -> {
+                        onResult(Result.failure(IllegalStateException("本设备缺少该保险库的硬件绑定密钥，无法修改 PIN")))
+                        return@launch
+                    }
+                    DekUnwrapResult.DeviceBindingCorrupt -> {
+                        onResult(Result.failure(IllegalStateException("保险库数据受损，无法验证原 PIN")))
+                        return@launch
+                    }
+                    DekUnwrapResult.UnsupportedFormat -> {
+                        onResult(Result.failure(IllegalStateException("保险库数据版本不受支持，请升级应用")))
+                        return@launch
+                    }
                 }
                 val newWrapped = withContext(Dispatchers.Default) {
                     VaultCryptoEngine.wrapDekWithPin(dek, newPin.toCharArray())
@@ -998,6 +972,17 @@ class VaultViewModel(
         }
         return null
     }
+
+    private fun VaultConfigDoc.toWrappedPayload(): WrappedDekPayload = WrappedDekPayload(
+        wrappedDekBase64 = wrappedDekBase64,
+        wrappedDekIvBase64 = wrappedDekIvBase64,
+        kdfSaltBase64 = kdfSaltBase64,
+        kdfIterations = kdfIterations.toInt(),
+        pinVerifierBase64 = pinVerifierBase64,
+        kdfAlgorithm = kdfAlgorithm,
+        schemaVersion = schemaVersion.toInt(),
+        deviceBinding = deviceBinding
+    )
 
     private fun validateEncryptedSize(cipherBase64: String): String? =
         if (cipherBase64.length > MAX_ENCRYPTED_PAYLOAD_CHARS) {

@@ -30,6 +30,17 @@ function validVaultConfig(userId) {
   };
 }
 
+function validVaultConfigV3(userId) {
+  return {
+    ...validVaultConfig(userId),
+    schemaVersion: 3,
+    deviceBinding: "ANDROID_KEYSTORE",
+    // Outer device-sealed blob (placeholder, must be 64..1024 chars).
+    wrappedDekBase64: "ZGV2aWNlX3NlYWxlZF9pbm5lcl9wYXlsb2FkX3BsYWNlaG9sZGVyX2Jhc2U2NF9kYXRhX3BhZGRlZF90b19zaXp0eV9jaGFyc19sb25n",
+    pinVerifierBase64: "device-bound:v3",
+  };
+}
+
 function validCard(userId) {
   const past = new Date(Date.now() - 2000);
   return {
@@ -278,6 +289,65 @@ test("Vault config migration: a seeded v1 document can only be rewritten as full
   await assertSucceeds(cfgRef.set(upgraded));
 });
 
+test("Vault config v3: device-bound shape is enforced and v2 migrates to v3", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cfgRef = aliceDb.collection("users").doc(ALICE_UID).collection("vault").doc("config");
+
+  // v2 -> v3 full rewrite (client migration after a successful PIN unlock); createdAt is immutable.
+  await assertSucceeds(cfgRef.set(validVaultConfig(ALICE_UID)));
+  const createdAt = (await cfgRef.get()).get("createdAt").toDate();
+  await assertSucceeds(cfgRef.set({ ...validVaultConfigV3(ALICE_UID), createdAt }));
+
+  // A v3 vault may not expose a PIN-derived verifier in cleartext.
+  await assertFails(
+    cfgRef.update({
+      pinVerifierBase64: "cGluX3ZlcmlmaWVyX2Jhc2U2NA==",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // Unknown device binding values are rejected.
+  await assertFails(
+    cfgRef.update({
+      deviceBinding: "SOFTWARE_FALLBACK",
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+
+  // v2 documents may not smuggle a deviceBinding field.
+  await assertFails(
+    cfgRef.set({ ...validVaultConfig(ALICE_UID), deviceBinding: "ANDROID_KEYSTORE", createdAt })
+  );
+
+  // schemaVersion may only move forward: v3 -> v2 downgrade is rejected.
+  await assertFails(cfgRef.set({ ...validVaultConfig(ALICE_UID), createdAt }));
+});
+
+test("Access cards v1: seeded legacy docs are no longer writable (eviction)", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const cardRef = aliceDb.collection("users").doc(ALICE_UID).collection("cards").doc("legacy_card");
+
+  const legacyCard = validCard(ALICE_UID);
+  delete legacyCard.cryptoVersion;
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("users").doc(ALICE_UID).collection("cards").doc("legacy_card").set(legacyCard);
+  });
+
+  // Even a harmless HCE toggle must fail: the doc lacks the required v2 declaration.
+  await assertFails(
+    cardRef.update({ activeHce: true, updatedAt: new Date(Date.now() - 500) })
+  );
+
+  // Rewriting it as a full v2 document remains possible (migration path); createdAt is immutable.
+  let cardCreatedAt;
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const snap = await ctx.firestore()
+      .collection("users").doc(ALICE_UID).collection("cards").doc("legacy_card").get();
+    cardCreatedAt = snap.get("createdAt").toDate();
+  });
+  await assertSucceeds(cardRef.set({ ...validCard(ALICE_UID), createdAt: cardCreatedAt }));
+});
+
 test("Access cards v2: creation requires cryptoVersion 2 and version never moves backwards", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const cardsCol = aliceDb.collection("users").doc(ALICE_UID).collection("cards");
@@ -331,19 +401,19 @@ test("Access cards: emulation counter only accepts an atomic +1 increment", asyn
   );
 });
 
-test("Access cards: createCardAndActivate transit card atomically deactivates legacy v1 and null-lastEmulatedAt cards", async () => {
+test("Access cards: createCardAndActivate transit card atomically deactivates previously active and null-lastEmulatedAt cards", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const cardsCol = aliceDb.collection("users").doc(ALICE_UID).collection("cards");
   const past = new Date(Date.now() - 5000);
 
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     const col = ctx.firestore().collection("users").doc(ALICE_UID).collection("cards");
-    const legacyV1 = validCard(ALICE_UID);
-    delete legacyV1.cryptoVersion;
-    legacyV1.activeHce = true;
-    legacyV1.createdAt = past;
-    legacyV1.updatedAt = past;
-    await col.doc("legacy_v1_active").set(legacyV1);
+    // v1 cards are evicted (see the eviction test); only v2 active cards are switchable.
+    const previousActive = validCard(ALICE_UID);
+    previousActive.activeHce = true;
+    previousActive.createdAt = past;
+    previousActive.updatedAt = past;
+    await col.doc("previous_active").set(previousActive);
 
     await col.doc("legacy_null_emul").set({
       ...validCard(ALICE_UID),
@@ -366,7 +436,7 @@ test("Access cards: createCardAndActivate transit card atomically deactivates le
     activeHce: true,
     cryptoVersion: 2,
   });
-  batch.update(cardsCol.doc("legacy_v1_active"), {
+  batch.update(cardsCol.doc("previous_active"), {
     activeHce: false,
     updatedAt: new Date(Date.now() - 500),
   });
