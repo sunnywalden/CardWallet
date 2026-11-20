@@ -1,4 +1,4 @@
-package com.example
+package com.aistudio.nfcshield
 
 import android.content.Context
 import android.util.Log
@@ -32,9 +32,9 @@ object FirebaseBootstrap {
 
             // 2. Explicit compile-time R.string.* fallback from google-services.json
             return runCatching {
-                val appId = safeGetString(appContext, R.string.google_app_id)
-                val apiKey = safeGetString(appContext, R.string.google_api_key)
-                val projectId = safeGetString(appContext, R.string.project_id)
+                val appId = safeGetString(appContext, "google_app_id")
+                val apiKey = safeGetString(appContext, "google_api_key")
+                val projectId = safeGetString(appContext, "project_id")
                 if (appId.isBlank() || apiKey.isBlank()) {
                     Log.e(TAG, "Missing Firebase google_app_id or google_api_key resources")
                     return false
@@ -45,11 +45,11 @@ object FirebaseBootstrap {
                 if (projectId.isNotBlank()) {
                     builder.setProjectId(projectId)
                 }
-                val gcmSenderId = safeGetString(appContext, R.string.gcm_defaultSenderId)
+                val gcmSenderId = safeGetString(appContext, "gcm_defaultSenderId")
                 if (gcmSenderId.isNotBlank()) {
                     builder.setGcmSenderId(gcmSenderId)
                 }
-                val storageBucket = safeGetString(appContext, R.string.google_storage_bucket)
+                val storageBucket = safeGetString(appContext, "google_storage_bucket")
                 if (storageBucket.isNotBlank()) {
                     builder.setStorageBucket(storageBucket)
                 }
@@ -65,7 +65,14 @@ object FirebaseBootstrap {
         return runCatching { FirebaseApp.getApps(context).isNotEmpty() }.getOrDefault(false)
     }
 
-    private fun safeGetString(context: Context, resId: Int): String {
+    /**
+     * Looks up google-services generated string resources dynamically. These resources only
+     * exist when google-services.json is present, so direct R.string references would fail
+     * to compile in local builds without it.
+     */
+    private fun safeGetString(context: Context, resourceName: String): String {
+        val resId = context.resources.getIdentifier(resourceName, "string", context.packageName)
+        if (resId == 0) return ""
         return runCatching { context.getString(resId).trim() }.getOrDefault("")
     }
 }

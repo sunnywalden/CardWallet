@@ -1,4 +1,4 @@
-package com.example
+package com.aistudio.nfcshield
 
 import android.nfc.NfcAdapter
 import androidx.compose.ui.test.assertIsDisplayed
@@ -6,9 +6,9 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import com.example.nfc.NfcHardwareStatus
-import com.example.ui.components.NfcLiveStatusBanner
-import com.example.ui.theme.MyApplicationTheme
+import com.aistudio.nfcshield.nfc.NfcHardwareStatus
+import com.aistudio.nfcshield.ui.components.NfcLiveStatusBanner
+import com.aistudio.nfcshield.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
