@@ -106,6 +106,16 @@ class MainActivity : FragmentActivity() {
         }
 
         try {
+            val intentDebugToken = appCheckDebugTokenFromIntent(intent)
+            AppCheckInstaller.install(this, intentDebugToken)
+            recordInitStep(
+                "MainActivity AppCheck installed (intentDebugToken=${intentDebugToken != null})"
+            )
+        } catch (t: Throwable) {
+            logStartupException("MainActivity.AppCheckInstaller", t)
+        }
+
+        try {
             nfcAdapter = NfcAdapter.getDefaultAdapter(this)
             recordInitStep(
                 "NfcAdapter acquired (available=${nfcAdapter != null}, enabled=${runCatching { nfcAdapter?.isEnabled }.getOrNull()})"
@@ -254,6 +264,17 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        try {
+            val debugToken = appCheckDebugTokenFromIntent(intent)
+            if (debugToken != null) {
+                // Persisted synchronously for the next App Check token fetch (debug builds only).
+                AppCheckInstaller.install(this, debugToken)
+                recordInitStep("MainActivity.onNewIntent debug AppCheck token override applied")
+            }
+        } catch (t: Throwable) {
+            logStartupException("MainActivity.onNewIntent.AppCheckInstaller", t)
+        }
         try {
             val tag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
@@ -268,6 +289,10 @@ class MainActivity : FragmentActivity() {
             logStartupException("MainActivity.onNewIntent", t)
         }
     }
+
+    private fun appCheckDebugTokenFromIntent(intent: Intent?): String? =
+        intent?.getStringExtra(EXTRA_APPCHECK_DEBUG_TOKEN)
+            ?: intent?.getStringExtra(EXTRA_FIREBASE_APPCHECK_DEBUG_TOKEN)
 
     private fun showEmergencyStartupFallback(throwable: Throwable) {
         runCatching {
@@ -296,6 +321,8 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val STARTUP_LOG_TAG = "ShieldVaultStartup"
+        const val EXTRA_APPCHECK_DEBUG_TOKEN = "appcheck_debug_token"
+        const val EXTRA_FIREBASE_APPCHECK_DEBUG_TOKEN = "firebase_app_check_debug_token"
         private const val MAX_TRACE_ENTRIES = 60
         private const val CRASH_REPORT_FILENAME = "last_startup_crash.log"
 

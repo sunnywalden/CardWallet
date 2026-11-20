@@ -87,12 +87,15 @@ import com.aistudio.nfcshield.R
 import com.aistudio.nfcshield.data.model.DecryptedAccessCard
 import com.aistudio.nfcshield.data.model.HceTapEvent
 import com.aistudio.nfcshield.data.model.UiState
+import com.aistudio.nfcshield.data.remote.SyncDiagnosticReport
 import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.ui.components.AccessCardVisual
 import com.aistudio.nfcshield.ui.components.CardTagFilterRow
 import com.aistudio.nfcshield.ui.components.CardTagPillsRow
 import com.aistudio.nfcshield.ui.components.DeleteCardConfirmDialog
+import com.aistudio.nfcshield.ui.components.OfflineSyncBanner
 import com.aistudio.nfcshield.ui.components.SwipeToDeleteCardContainer
+import com.aistudio.nfcshield.ui.components.SyncDiagnosticsDialog
 import com.aistudio.nfcshield.ui.components.resolvedIcon
 import com.aistudio.nfcshield.ui.components.toColor
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
@@ -120,6 +123,8 @@ fun WalletHomeScreen(
     onToggleHce: (DecryptedAccessCard) -> Unit,
     onDeleteCard: (DecryptedAccessCard) -> Unit = {},
     onRetrySync: () -> Unit = {},
+    syncIssue: SyncDiagnosticReport? = null,
+    isRetryingSync: Boolean = false,
     onNavigateToScan: () -> Unit,
     onOpenNfcSettings: () -> Unit,
     onLockVaultNow: () -> Unit,
@@ -133,6 +138,7 @@ fun WalletHomeScreen(
         ?: HomeCardFilter.ALL
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDeleteCard by remember { mutableStateOf<DecryptedAccessCard?>(null) }
+    var showSyncDiagnostics by remember { mutableStateOf(false) }
     val revealedCardIds = remember { mutableSetOf<String>() }
     var initialLoadBatchPending by remember { mutableStateOf(true) }
 
@@ -387,6 +393,18 @@ fun WalletHomeScreen(
                                 ),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
+                                // 0. Restrained offline degradation banner while the encrypted cache serves data
+                                if (syncIssue != null) {
+                                    item(key = "offline_sync_banner") {
+                                        OfflineSyncBanner(
+                                            report = syncIssue,
+                                            isRetrying = isRetryingSync,
+                                            onRetry = onRetrySync,
+                                            onShowDiagnostics = { showSyncDiagnostics = true }
+                                        )
+                                    }
+                                }
+
                                 // 1. Top Hero Focal Card with translucent glow & smooth scroll parallax transition
                                 if (focalCard != null) {
                                     item(key = "wallet_hero_focal_stage") {
@@ -641,6 +659,15 @@ fun WalletHomeScreen(
                     pendingDeleteCard = null
                     onDeleteCard(targetCard)
                 }
+            )
+        }
+
+        if (showSyncDiagnostics) {
+            SyncDiagnosticsDialog(
+                report = syncIssue,
+                isRetrying = isRetryingSync,
+                onRetry = onRetrySync,
+                onDismiss = { showSyncDiagnostics = false }
             )
         }
     }

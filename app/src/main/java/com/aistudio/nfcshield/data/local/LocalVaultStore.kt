@@ -14,6 +14,9 @@ import com.aistudio.nfcshield.auth.BiometricHelper
 import com.aistudio.nfcshield.crypto.VaultCryptoEngine
 import com.aistudio.nfcshield.data.model.ActiveHceCardConfig
 import com.aistudio.nfcshield.data.model.BiometricSealMode
+import com.aistudio.nfcshield.data.model.EncryptedCardDoc
+import com.aistudio.nfcshield.data.model.VaultConfigDoc
+import com.aistudio.nfcshield.data.model.VaultSavedStateCodec
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -35,6 +38,16 @@ data class SealedDekRecord(
 data class PinLockoutState(
     val failedAttempts: Int = 0,
     val lockoutUntilElapsedMillis: Long = 0L
+)
+
+/**
+ * Offline fallback snapshot: the exact ciphertext documents last observed in Firestore.
+ * No plaintext DEK, PIN or decrypted card payload is ever stored here.
+ */
+data class EncryptedVaultCache(
+    val config: VaultConfigDoc?,
+    val cards: List<EncryptedCardDoc>,
+    val cachedAtMillis: Long
 )
 
 /**
@@ -73,6 +86,74 @@ class LocalVaultStore(
         val QUICK_HCE_ENABLED = booleanPreferencesKey("quick_hce_enabled")
         val PIN_FAILED_ATTEMPTS = intPreferencesKey("pin_failed_attempts")
         val PIN_LOCKOUT_UNTIL = longPreferencesKey("pin_lockout_until_elapsed")
+        val CACHE_OWNER_UID = stringPreferencesKey("encrypted_cache_owner_uid")
+        val CACHE_VAULT_CONFIG = stringPreferencesKey("encrypted_cache_vault_config")
+        val CACHE_CARDS = stringPreferencesKey("encrypted_cache_cards")
+        val CACHE_UPDATED_AT = longPreferencesKey("encrypted_cache_updated_at")
+    }
+
+    /**
+     * Persists the latest encrypted vault config (including schema v3 deviceBinding) for
+     * offline unlock. Only same-owner documents are accepted; switching accounts resets
+     * the config slot so one account can never unlock with another's cached document.
+     */
+    suspend fun saveCachedVaultConfig(uid: String, config: VaultConfigDoc) {
+        if (uid.isBlank() || config.userId != uid) return
+        val encoded = VaultSavedStateCodec.encodeVaultConfig(config)
+        dataStore.edit { prefs ->
+            if (prefs[Keys.CACHE_OWNER_UID] != uid) {
+                prefs.remove(Keys.CACHE_CARDS)
+            }
+            prefs[Keys.CACHE_OWNER_UID] = uid
+            prefs[Keys.CACHE_VAULT_CONFIG] = encoded
+            prefs[Keys.CACHE_UPDATED_AT] = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * Persists the latest encrypted card list. Empty snapshots never overwrite a populated
+     * cache: Firestore may emit a local-cache snapshot (possibly empty) before the server
+     * answers, and wiping the offline cache at that moment is never desirable.
+     */
+    suspend fun saveCachedCards(uid: String, cards: List<EncryptedCardDoc>) {
+        if (uid.isBlank() || cards.isEmpty()) return
+        val owned = cards.filter { it.userId.isBlank() || it.userId == uid }
+        if (owned.isEmpty()) return
+        val encoded = VaultSavedStateCodec.encodeEncryptedCards(owned) ?: return
+        dataStore.edit { prefs ->
+            if (prefs[Keys.CACHE_OWNER_UID] != uid) {
+                prefs.remove(Keys.CACHE_VAULT_CONFIG)
+            }
+            prefs[Keys.CACHE_OWNER_UID] = uid
+            prefs[Keys.CACHE_CARDS] = encoded
+            prefs[Keys.CACHE_UPDATED_AT] = System.currentTimeMillis()
+        }
+    }
+
+    /** Reads the offline snapshot for [uid]; null when the cache belongs to another account. */
+    suspend fun readEncryptedVaultCache(uid: String): EncryptedVaultCache? {
+        val prefs = dataStore.data.first()
+        if (prefs[Keys.CACHE_OWNER_UID] != uid) return null
+        val config = VaultSavedStateCodec.decodeVaultConfig(prefs[Keys.CACHE_VAULT_CONFIG])
+            ?.takeIf { it.userId == uid }
+        val cards = VaultSavedStateCodec.decodeEncryptedCards(prefs[Keys.CACHE_CARDS])
+            ?.filter { it.userId.isBlank() || it.userId == uid }
+            .orEmpty()
+        if (config == null && cards.isEmpty()) return null
+        return EncryptedVaultCache(
+            config = config,
+            cards = cards,
+            cachedAtMillis = prefs[Keys.CACHE_UPDATED_AT] ?: 0L
+        )
+    }
+
+    suspend fun clearEncryptedVaultCache() {
+        dataStore.edit { prefs ->
+            prefs.remove(Keys.CACHE_OWNER_UID)
+            prefs.remove(Keys.CACHE_VAULT_CONFIG)
+            prefs.remove(Keys.CACHE_CARDS)
+            prefs.remove(Keys.CACHE_UPDATED_AT)
+        }
     }
 
     val preferencesFlow: Flow<LocalSecurityPreferences> = dataStore.data.map { prefs ->
@@ -279,6 +360,11 @@ class LocalVaultStore(
             prefs.remove(Keys.REQUIRE_UNLOCK_FOR_HCE)
             prefs.remove(Keys.PIN_FAILED_ATTEMPTS)
             prefs.remove(Keys.PIN_LOCKOUT_UNTIL)
+            // The offline ciphertext cache is account-scoped and must never survive sign-out.
+            prefs.remove(Keys.CACHE_OWNER_UID)
+            prefs.remove(Keys.CACHE_VAULT_CONFIG)
+            prefs.remove(Keys.CACHE_CARDS)
+            prefs.remove(Keys.CACHE_UPDATED_AT)
         }
     }
 }

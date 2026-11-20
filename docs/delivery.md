@@ -70,7 +70,7 @@
 
 ## 5. 已交付验证
 
-- 单元测试 38/38、Firestore 规则测试 11/11(emulator,2026-11-20)
+- 单元测试 62/62、Firestore 规则测试 11/11(emulator,2026-11-20)
 - CI 双 job(Android / rules)全绿,PR #1、#2 已合并 main
 - release APK 正式签名 + Firebase 完整配置 + App Check 接入且**已强制执行**
 
@@ -79,7 +79,7 @@
 AI Studio 重新生成代码会覆盖本地修复(已发生两次)。每次从 AI Studio 导出/同步后,先运行:
 
 ```bash
-./scripts/check-delivery.sh          # 26 项静态检查(秒级)
+./scripts/check-delivery.sh          # 33 项静态检查(秒级)
 ./scripts/check-delivery.sh --build  # 追加单元测试
 ```
 
@@ -112,3 +112,44 @@ AI Studio 重新生成代码会覆盖本地修复(已发生两次)。每次从 A
 - 规则已收紧:卡文档必须显式 `cryptoVersion == 2`;v1 文档连 `activeHce` 切换也不可写;
   vault 写入仅接受 v2(迁移来源)或 v3,v1 被拒绝。
 - 本地 `AES_KEYSTORE` 生物缓存读取路径保留(仅升级用途,不涉及云端数据淘汰)。
+## 9. 云端同步容灾与 App Check 调试令牌(2026-11-20 已交付)
+
+### 9.1 本地加密离线缓存
+
+- `LocalVaultStore` 新增按账号隔离的加密缓存:与 Firestore 完全一致的 `VaultConfigDoc`
+  (**含 v3 `deviceBinding`**)与卡片密文列表;不落盘任何明文 DEK/PIN/卡片明文。
+- 启动/锁屏唤醒时先水合缓存 → 有缓存直接进入 PIN/生物识别解锁与卡包;云端监听在后台
+  重连。缓存写入失败不影响正常同步;空卡片快照**不会**清空已有缓存。
+- 退出登录/切换账号时缓存随 `clearSensitiveLocalSession()` 一并清除。
+
+### 9.2 令牌预热、阶梯退避与自动恢复
+
+- Auth ID Token 与 App Check Token 刷新超时 4s → **10s**(覆盖 Doze 唤醒与 Play Integrity 往返)。
+- Firestore 监听对 `PERMISSION_DENIED / UNAVAILABLE / DEADLINE_EXCEEDED / ABORTED`
+  阶梯退避重试 **1s → 2s → 4s → 8s**,每次重试前强制刷新双令牌;耗尽后保留缓存并等待
+  前台恢复或网络恢复自动重连(`NetworkCallback` + `ON_START`)。
+- 仓储层 `refreshSessionCredentials` 返回 `CredentialRefreshResult`(Auth / App Check / 网络
+  三维分类),ViewModel 暴露 `cloudSyncIssue: StateFlow<SyncDiagnosticReport?>`。
+
+### 9.3 诊断界面
+
+- **无缓存 + 同步受限**:锁屏错误页展示 `SyncDiagnosticsCard`(Google 登录会话 / App Check
+  设备证明 / 网络三项探针 + Firestore 错误码),重试按钮带加载态。
+- **有缓存 + 云端受限**:首页顶部显示琥珀色离线横幅,可一键重试或打开诊断弹窗;恢复后自动收起。
+- **Debug 构建专属**:诊断卡展示当前生效的 App Check Debug Token 与来源
+  (启动参数 / Secrets / 本机随机),支持一键复制到 Firebase Console。Release 构建中
+  `activeDebugTokenInfo()` 恒为 null,APK 内不包含任何调试令牌。
+
+### 9.4 Debug Token 注入
+
+| 来源(优先级) | 说明 |
+|---|---|
+| Intent extra | `appcheck_debug_token` / `firebase_app_check_debug_token`(调试启动参数) |
+| AI Studio Secrets | `.env` 的 `FIREBASE_APPCHECK_DEBUG_TOKEN`,仅注入 debug 变体 |
+| SDK 随机生成 | 未配置前两者的兜底;logcat 打印,需在 Console 注册 |
+
+安装器在安装 Debug Provider 前以 `commit()` 同步写入 SDK 的调试存储
+(`com.google.firebase.appcheck.debug.store.<persistenceKey>`),确保首次取证即使用已注册令牌。
+
+**上线后操作**:将已在 Firebase Console 注册的调试令牌填入 AI Studio Secrets 面板
+(键名 `FIREBASE_APPCHECK_DEBUG_TOKEN`),Debug 构建与云端模拟器即可在 `ENFORCED` 下正常同步。

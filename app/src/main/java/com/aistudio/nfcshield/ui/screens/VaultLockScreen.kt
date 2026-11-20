@@ -58,8 +58,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aistudio.nfcshield.R
 import com.aistudio.nfcshield.auth.BiometricHelper
+import com.aistudio.nfcshield.data.remote.SyncDiagnosticReport
 import com.aistudio.nfcshield.ui.components.PinDotsIndicator
 import com.aistudio.nfcshield.ui.components.PinKeypad
+import com.aistudio.nfcshield.ui.components.SyncDiagnosticsCard
 import com.aistudio.nfcshield.ui.theme.VaultCyan
 import com.aistudio.nfcshield.ui.theme.VaultHairline
 import com.aistudio.nfcshield.ui.theme.VaultHairlineStrong
@@ -86,6 +88,8 @@ fun VaultLockScreen(
     onClearError: () -> Unit,
     onSignOut: () -> Unit,
     onRetrySync: () -> Unit = {},
+    syncDiagnostic: SyncDiagnosticReport? = null,
+    isRetryingSync: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -121,6 +125,7 @@ fun VaultLockScreen(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .widthIn(max = 460.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -159,8 +164,17 @@ fun VaultLockScreen(
                             textAlign = TextAlign.Center
                         )
                     }
+                    if (syncDiagnostic != null) {
+                        SyncDiagnosticsCard(
+                            report = syncDiagnostic,
+                            isRetrying = isRetryingSync,
+                            onRetry = onRetrySync,
+                            showRetryButton = false
+                        )
+                    }
                     Button(
-                        onClick = onRetrySync,
+                        onClick = { if (!isRetryingSync) onRetrySync() },
+                        enabled = !isRetryingSync,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = colorScheme.primary,
                             contentColor = colorScheme.onPrimary
@@ -171,10 +185,20 @@ fun VaultLockScreen(
                             .height(48.dp)
                             .testTag("vault_error_retry_sync")
                     ) {
-                        Text(
-                            text = stringResource(R.string.vault_sync_retry_button),
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        if (isRetryingSync) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text("正在刷新令牌并重连…", fontWeight = FontWeight.SemiBold)
+                        } else {
+                            Text(
+                                text = stringResource(R.string.vault_sync_retry_button),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                     OutlinedButton(
                         onClick = onSignOut,

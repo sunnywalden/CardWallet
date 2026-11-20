@@ -25,7 +25,10 @@ import com.aistudio.nfcshield.data.model.NfcTechType
 import com.aistudio.nfcshield.data.model.UiState
 import com.aistudio.nfcshield.data.model.VaultConfigDoc
 import com.aistudio.nfcshield.data.model.VaultSavedStateCodec
+import com.aistudio.nfcshield.data.remote.AppCheckDebugTokenInfo
 import com.aistudio.nfcshield.data.remote.FirestoreVaultRepository
+import com.aistudio.nfcshield.data.remote.SyncDiagnosticReport
+import com.aistudio.nfcshield.data.remote.toSyncDiagnosticReport
 import com.aistudio.nfcshield.nfc.HceRuntimeBus
 import com.aistudio.nfcshield.nfc.NfcTagParser
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -76,7 +79,9 @@ class VaultViewModel(
     private val repository: FirestoreVaultRepository,
     private val localStore: LocalVaultStore,
     val currentUserId: String,
-    private val savedStateHandle: SavedStateHandle = SavedStateHandle()
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    /** Debug builds expose the active App Check debug token here; release always returns null. */
+    private val debugTokenProvider: () -> AppCheckDebugTokenInfo? = { null }
 ) : ViewModel() {
 
     private val _dekState = MutableStateFlow<ByteArray?>(null)
@@ -100,6 +105,12 @@ class VaultViewModel(
         savedStateHandle.getStateFlow(KEY_DEBUG_READER_ENABLED, true)
 
     private val _syncRetryTrigger = MutableStateFlow(0)
+    private val _cloudSyncIssue = MutableStateFlow<SyncDiagnosticReport?>(null)
+    val cloudSyncIssue: StateFlow<SyncDiagnosticReport?> = _cloudSyncIssue.asStateFlow()
+    private val _isRetryingSync = MutableStateFlow(false)
+    val isRetryingSync: StateFlow<Boolean> = _isRetryingSync.asStateFlow()
+    private val _isHydratingCache = MutableStateFlow(false)
+    val isHydratingCache: StateFlow<Boolean> = _isHydratingCache.asStateFlow()
     private val hasMatchingSavedOwner: Boolean =
         savedStateHandle.get<String>(KEY_OWNER_UID) == currentUserId
 
@@ -190,7 +201,10 @@ class VaultViewModel(
                     if (cfg != null) {
                         lastKnownVaultConfig = cfg
                         persistVaultConfigToSavedState(cfg)
+                        runCatching { localStore.saveCachedVaultConfig(currentUserId, cfg) }
+                            .onFailure { Log.w(TAG, "offline vault config cache write failed", it) }
                     }
+                    _cloudSyncIssue.value = null
                     UiState.Success(cfg)
                 }
                 .onStart {
@@ -213,8 +227,10 @@ class VaultViewModel(
                         rootError
                     )
                     val cached = lastKnownVaultConfig
+                    val code = firestoreError?.code?.name
+                    viewModelScope.launch { updateSyncDiagnostics(code) }
                     if (cached != null) {
-                        _statusMessage.value = "云端同步暂受限，已保留本地保险库状态"
+                        _statusMessage.value = "云端同步暂受限，已保留本地加密缓存"
                         emit(UiState.Success(cached))
                     } else {
                         emit(UiState.Error(rootError.localizedMessage ?: "无法连接云端保险库配置"))
@@ -233,6 +249,9 @@ class VaultViewModel(
                 .map<List<EncryptedCardDoc>, UiState<List<EncryptedCardDoc>>> { docs ->
                     lastKnownEncryptedCards = docs
                     persistEncryptedCardsToSavedState(docs)
+                    runCatching { localStore.saveCachedCards(currentUserId, docs) }
+                        .onFailure { Log.w(TAG, "offline cards cache write failed", it) }
+                    _cloudSyncIssue.value = null
                     UiState.Success(docs)
                 }
                 .onStart {
@@ -255,8 +274,10 @@ class VaultViewModel(
                         rootError
                     )
                     val cached = lastKnownEncryptedCards
+                    val code = firestoreError?.code?.name
+                    viewModelScope.launch { updateSyncDiagnostics(code) }
                     if (cached != null) {
-                        _statusMessage.value = "云端卡片同步暂受限，当前显示最近缓存"
+                        _statusMessage.value = "云端卡片同步暂受限，当前显示本地加密缓存"
                         emit(UiState.Success(cached))
                     } else {
                         emit(UiState.Error(rootError.localizedMessage ?: "加载云端加密门禁卡失败"))
@@ -344,6 +365,17 @@ class VaultViewModel(
         viewModelScope.launch {
             refreshLockoutFromStore()
         }
+        // Offline fallback: hydrate the encrypted cache before/while the cloud streams start,
+        // so lock-screen wake, cold start and weak-network periods never block on Firestore.
+        viewModelScope.launch {
+            hydrateOfflineCache()
+        }
+        // First-subscription warm-up: refresh both credentials in the background so the
+        // initial Firestore listeners do not race an expired Auth/App Check token.
+        viewModelScope.launch {
+            runCatching { repository.refreshSessionCredentials(forceRefresh = false) }
+                .onFailure { Log.w(TAG, "initial credential warm-up skipped", it) }
+        }
         // Side effects live outside the state derivation (M6): the cached HCE slot is
         // synchronized from emitted card state, never from inside combine {}.
         viewModelScope.launch {
@@ -384,6 +416,67 @@ class VaultViewModel(
             _hasBiometricSealedKey.value = record != null
             _sealMode.value = record?.mode
         }
+    }
+
+    /**
+     * Loads the encrypted offline snapshot (vault config + card ciphertext) for this account.
+     * Only ciphertext leaves DataStore; unlocking still requires PIN or hardware biometrics.
+     */
+    private suspend fun hydrateOfflineCache() {
+        _isHydratingCache.value = true
+        try {
+            val cache = localStore.readEncryptedVaultCache(currentUserId) ?: return
+            var changed = false
+            if (lastKnownVaultConfig == null && cache.config != null) {
+                lastKnownVaultConfig = cache.config
+                persistVaultConfigToSavedState(cache.config)
+                changed = true
+            }
+            if (lastKnownEncryptedCards.isNullOrEmpty() && cache.cards.isNotEmpty()) {
+                lastKnownEncryptedCards = cache.cards
+                persistEncryptedCardsToSavedState(cache.cards)
+                changed = true
+            }
+            if (changed) {
+                _syncRetryTrigger.value += 1
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "offline cache hydration failed", e)
+        } finally {
+            _isHydratingCache.value = false
+        }
+    }
+
+    /** Refreshes both credentials and publishes a structured diagnostic report. */
+    private suspend fun updateSyncDiagnostics(firestoreCode: String? = null) {
+        runCatching { repository.refreshSessionCredentials(forceRefresh = true) }
+            .onSuccess { result ->
+                _cloudSyncIssue.value = result.toSyncDiagnosticReport(
+                    firestoreCode = firestoreCode,
+                    debugTokenInfo = debugTokenProvider()
+                )
+            }
+            .onFailure { Log.w(TAG, "sync diagnostics probe failed", it) }
+    }
+
+    /** Keeps the offline cache aligned with a freshly written vault config. */
+    private suspend fun cacheVaultConfig(wrapped: WrappedDekPayload) {
+        val doc = VaultConfigDoc(
+            id = "config",
+            userId = currentUserId,
+            wrappedDekBase64 = wrapped.wrappedDekBase64,
+            wrappedDekIvBase64 = wrapped.wrappedDekIvBase64,
+            kdfSaltBase64 = wrapped.kdfSaltBase64,
+            kdfIterations = wrapped.kdfIterations.toLong(),
+            pinVerifierBase64 = wrapped.pinVerifierBase64,
+            kdfAlgorithm = wrapped.kdfAlgorithm,
+            schemaVersion = wrapped.schemaVersion.toLong(),
+            deviceBinding = wrapped.deviceBinding
+        )
+        runCatching { localStore.saveCachedVaultConfig(currentUserId, doc) }
+            .onFailure { Log.w(TAG, "offline vault config cache write failed", it) }
     }
 
     private suspend fun refreshLockoutFromStore() {
@@ -482,6 +575,7 @@ class VaultViewModel(
                 }
                 val saveRes = repository.saveVaultConfig(currentUserId, wrapped, isUpdate = false)
                 if (saveRes.isSuccess) {
+                    cacheVaultConfig(wrapped)
                     localStore.setBiometricEnabled(enableBiometric)
                     if (enableBiometric) {
                         val mode = trySealForBiometric(dek)
@@ -571,6 +665,7 @@ class VaultViewModel(
                 VaultCryptoEngine.wrapDekWithPin(dek, pin.toCharArray())
             }
             repository.saveVaultConfig(currentUserId, upgraded, isUpdate = true).getOrThrow()
+            cacheVaultConfig(upgraded)
             _statusMessage.value =
                 "保险库已升级为设备密钥绑定：云端数据此后仅能在本机解锁，请勿卸载应用"
         }.onFailure {
@@ -741,9 +836,32 @@ class VaultViewModel(
     }
 
     fun retryCloudSync() {
+        if (_isRetryingSync.value) return
         viewModelScope.launch {
-            repository.refreshSessionCredentials(forceRefresh = true)
-            _syncRetryTrigger.value += 1
+            _isRetryingSync.value = true
+            try {
+                val result = runCatching {
+                    repository.refreshSessionCredentials(forceRefresh = true)
+                }.getOrNull()
+                if (result != null &&
+                    (!result.authOk || !result.appCheckOk || !result.networkAvailable)
+                ) {
+                    _cloudSyncIssue.value = result.toSyncDiagnosticReport(
+                        firestoreCode = _cloudSyncIssue.value?.firestoreCode,
+                        debugTokenInfo = debugTokenProvider()
+                    )
+                }
+                _syncRetryTrigger.value += 1
+            } finally {
+                _isRetryingSync.value = false
+            }
+        }
+    }
+
+    /** Called by the connectivity monitor when the network becomes reachable again. */
+    fun onNetworkRestored() {
+        if (_cloudSyncIssue.value != null) {
+            retryCloudSync()
         }
     }
 
@@ -752,7 +870,8 @@ class VaultViewModel(
         backgroundTimestampElapsedMillis = null
         savedStateHandle.remove<Long>(KEY_BACKGROUND_ELAPSED_MS)
 
-        val hasSyncError = vaultConfigStream.value is UiState.Error ||
+        val hasSyncError = _cloudSyncIssue.value != null ||
+            vaultConfigStream.value is UiState.Error ||
             encryptedCardsStream.value is UiState.Error
         if (hasSyncError) {
             retryCloudSync()
@@ -1089,6 +1208,7 @@ class VaultViewModel(
                 }
                 val res = repository.saveVaultConfig(currentUserId, newWrapped, isUpdate = true)
                 if (res.isSuccess) {
+                    cacheVaultConfig(newWrapped)
                     val sealMode = trySealForBiometric(dek)
                     _statusMessage.value = if (securityPrefs.value.biometricEnabled && sealMode == null) {
                         "PIN 码已更新并同步；生物识别缓存将在下次解锁时重建"
@@ -1114,10 +1234,13 @@ class VaultViewModel(
         _dekState.value = null
         lastKnownVaultConfig = null
         lastKnownEncryptedCards = null
+        _cloudSyncIssue.value = null
+        _isRetryingSync.value = false
         clearSavedStateKeys()
         HceRuntimeBus.setVaultUnlocked(false)
         HceRuntimeBus.updateCachedActiveCard(null)
         VaultCryptoEngine.deleteBiometricKeystoreKey()
+        runCatching { localStore.clearEncryptedVaultCache() }
         localStore.clearSensitiveLocalSession()
     }
 

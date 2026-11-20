@@ -80,13 +80,29 @@ check "firestore.rules 含 v3 设备绑定分支" \
 check "firestore.rules 拒绝 v1 卡密文" \
   bash -c 'grep -q "data.cryptoVersion == 2" firestore.rules && ! grep -q "cryptoVersion >= 1" firestore.rules'
 
-echo "[7] 工程化"
+echo "[7] 同步容灾与调试令牌(2026-11-20)"
+check "Debug AppCheck 安装器同步写入调试令牌" \
+  bash -c 'grep -q "com.google.firebase.appcheck.debug.DEBUG_SECRET" app/src/debug/java/com/aistudio/nfcshield/AppCheckInstaller.kt && grep -q "\.commit()" app/src/debug/java/com/aistudio/nfcshield/AppCheckInstaller.kt'
+check "Release AppCheck 安装器零调试令牌残留" \
+  bash -c '! grep -q "DebugAppCheckProviderFactory\|DEBUG_SECRET" app/src/release/java/com/aistudio/nfcshield/AppCheckInstaller.kt'
+check "BuildConfig 仅 debug 注入 APPCHECK_DEBUG_TOKEN" \
+  bash -c 'grep -q "APPCHECK_DEBUG_TOKEN" app/build.gradle.kts && grep -q "Release APKs must never carry a debug App Check token" app/build.gradle.kts'
+check "VaultSavedStateCodec 序列化 v3 deviceBinding" \
+  grep -q 'put("deviceBinding"' app/src/main/java/com/aistudio/nfcshield/data/model/VaultSavedStateCodec.kt
+check "LocalVaultStore 含加密离线缓存与登出清理" \
+  bash -c 'grep -q "readEncryptedVaultCache" app/src/main/java/com/aistudio/nfcshield/data/local/LocalVaultStore.kt && grep -q "CACHE_CARDS" app/src/main/java/com/aistudio/nfcshield/data/local/LocalVaultStore.kt'
+check "仓储层 10s 令牌超时与阶梯退避" \
+  bash -c 'grep -q "TOKEN_REFRESH_TIMEOUT_MS = 10_000L" app/src/main/java/com/aistudio/nfcshield/data/remote/FirestoreVaultRepository.kt && grep -q "RETRY_BASE_DELAY_MS shl" app/src/main/java/com/aistudio/nfcshield/data/remote/FirestoreVaultRepository.kt'
+check "ViewModel 暴露 cloudSyncIssue 且 UI 接线" \
+  bash -c 'grep -q "cloudSyncIssue" app/src/main/java/com/aistudio/nfcshield/ui/viewmodel/VaultViewModel.kt && grep -q "SyncDiagnosticsCard" app/src/main/java/com/aistudio/nfcshield/ui/screens/VaultLockScreen.kt'
+
+echo "[8] 工程化"
 check "CI 工作流存在" test -f .github/workflows/ci.yml
 check "规则测试 harness 存在" test -f package.json
 check "交付文档存在" test -f docs/delivery.md
 
 if [[ "${1:-}" == "--build" ]]; then
-  echo "[8] 单元测试"
+  echo "[9] 单元测试"
   export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home}"
   export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
   if ./gradlew testDebugUnitTest --console=plain >/tmp/cw-check-build.log 2>&1; then
