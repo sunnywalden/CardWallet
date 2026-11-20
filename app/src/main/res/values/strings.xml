@@ -79,4 +79,16 @@
     <!-- Quick Settings Tile -->
     <string name="qs_tile_nfc_label">NFC 模拟刷卡</string>
     <string name="qs_tile_add_button">添加「NFC 模拟刷卡」磁贴到下拉面板</string>
+
+    <!-- Live NFC Status Monitor -->
+    <string name="nfc_monitor_on_title">NFC 适配器已开启</string>
+    <string name="nfc_monitor_on_hce_subtitle">HCE 卡模拟与贴卡读取已就绪 · 实时监测</string>
+    <string name="nfc_monitor_on_read_subtitle">物理贴卡读取已就绪 · 实时监测</string>
+    <string name="nfc_monitor_off_title">NFC 适配器已关闭</string>
+    <string name="nfc_monitor_off_subtitle">开启系统 NFC 后即可刷卡或读取实体门禁卡</string>
+    <string name="nfc_monitor_turning_title">NFC 状态正在切换…</string>
+    <string name="nfc_monitor_unsupported_title">当前设备未检测到 NFC 硬件</string>
+    <string name="nfc_monitor_unsupported_subtitle">仍可使用云端加密卡包管理门禁凭证</string>
+    <string name="nfc_monitor_open_settings">去开启</string>
+    <string name="nfc_monitor_live_badge">LIVE</string>
 </resources>

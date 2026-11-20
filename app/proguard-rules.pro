@@ -19,3 +19,10 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+-keep class com.example.ShieldVaultApplication { *; }
+-keep class com.example.MainActivity { *; }
+-keep class com.example.nfc.AccessCardHceService { *; }
+-keep class com.example.nfc.HceQuickTileService { *; }
+-keep class com.example.data.model.** { *; }
+
