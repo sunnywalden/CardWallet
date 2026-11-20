@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +65,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -155,7 +157,8 @@ private fun AuthenticatedVaultHost(
                 VaultViewModel(
                     repository = FirestoreVaultRepository(db),
                     localStore = LocalVaultStore(app),
-                    currentUserId = uid
+                    currentUserId = uid,
+                    savedStateHandle = createSavedStateHandle()
                 )
             }
         }
@@ -266,16 +269,20 @@ private fun AuthenticatedVaultHost(
                 viewModel.unlockWithBiometric(onFallbackMsg)
             },
             onClearError = { viewModel.clearPinError() },
-            onSignOut = performSignOut
+            onSignOut = performSignOut,
+            onRetrySync = { viewModel.retryCloudSync() }
         )
         return
     }
 
-    var activeTab by remember { mutableStateOf(VaultTab.WALLET) }
-    var selectedCardId by remember { mutableStateOf<String?>(null) }
-    var showNfcDebugScreen by remember { mutableStateOf(false) }
-    var debugReaderModeEnabled by remember { mutableStateOf(true) }
-    var physicalScanRequestNonce by remember { mutableIntStateOf(0) }
+    val activeTabKey by viewModel.activeTabKey.collectAsStateWithLifecycle()
+    val activeTab = remember(activeTabKey) {
+        VaultTab.entries.firstOrNull { it.name == activeTabKey } ?: VaultTab.WALLET
+    }
+    val selectedCardId by viewModel.selectedCardId.collectAsStateWithLifecycle()
+    val showNfcDebugScreen by viewModel.showNfcDebugScreen.collectAsStateWithLifecycle()
+    val debugReaderModeEnabled by viewModel.debugReaderModeEnabled.collectAsStateWithLifecycle()
+    var physicalScanRequestNonce by rememberSaveable { mutableIntStateOf(0) }
     val scannedTagLogs by HceRuntimeBus.scannedTagLogs.collectAsStateWithLifecycle()
 
     val selectedCard = remember(cardsState, selectedCardId) {
@@ -297,9 +304,9 @@ private fun AuthenticatedVaultHost(
     }
 
     if (showNfcDebugScreen && selectedCard == null) {
-        BackHandler { showNfcDebugScreen = false }
+        BackHandler { viewModel.setShowNfcDebugScreen(false) }
     } else if (activeTab != VaultTab.WALLET && selectedCard == null) {
-        BackHandler { activeTab = VaultTab.WALLET }
+        BackHandler { viewModel.setActiveTabKey(VaultTab.WALLET.name) }
     }
 
     val colorScheme = MaterialTheme.colorScheme
@@ -334,7 +341,7 @@ private fun AuthenticatedVaultHost(
                                 val (label, filledIcon, outlinedIcon) = tabMetadata(tab)
                                 NavigationBarItem(
                                     selected = selected,
-                                    onClick = { activeTab = tab },
+                                    onClick = { viewModel.setActiveTabKey(tab.name) },
                                     icon = {
                                         Icon(
                                             imageVector = if (selected) filledIcon else outlinedIcon,
@@ -378,7 +385,7 @@ private fun AuthenticatedVaultHost(
                             val (label, filledIcon, outlinedIcon) = tabMetadata(tab)
                             NavigationRailItem(
                                 selected = selected,
-                                onClick = { activeTab = tab },
+                                onClick = { viewModel.setActiveTabKey(tab.name) },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) filledIcon else outlinedIcon,
@@ -430,7 +437,7 @@ private fun AuthenticatedVaultHost(
                             selectedCard != null -> {
                                 CardDetailScreen(
                                     card = selectedCard,
-                                    onBack = { selectedCardId = null },
+                                    onBack = { viewModel.setSelectedCardId(null) },
                                     onToggleHce = { card -> viewModel.toggleActiveHce(card, syncHceAid) },
                                     onUpdateCard = { existing, label, cat, accent, secrets, onDone ->
                                         viewModel.updateCard(
@@ -446,14 +453,17 @@ private fun AuthenticatedVaultHost(
                                     },
                                     onDeleteCard = { card ->
                                         viewModel.deleteCard(card, syncHceAid) {
-                                            selectedCardId = null
+                                            viewModel.setSelectedCardId(null)
                                         }
                                     },
                                     onShowMessage = { msg ->
                                         scope.launch {
                                             snackbarHostState.showSnackbar(msg)
                                         }
-                                    }
+                                    },
+                                    nfcStatus = nfcStatus,
+                                    latestTapEvent = recentHceEvents.firstOrNull(),
+                                    onOpenNfcSettings = openNfcSettings
                                 )
                             }
 
@@ -463,8 +473,8 @@ private fun AuthenticatedVaultHost(
                                     readerModeEnabled = debugReaderModeEnabled,
                                     tagLogs = scannedTagLogs,
                                     hceEvents = recentHceEvents,
-                                    onBack = { showNfcDebugScreen = false },
-                                    onToggleReaderMode = { debugReaderModeEnabled = it },
+                                    onBack = { viewModel.setShowNfcDebugScreen(false) },
+                                    onToggleReaderMode = { viewModel.setDebugReaderModeEnabled(it) },
                                     onRefreshStatus = {
                                         manualNfcStatusOverride = HceAidManager.getHardwareStatus(context)
                                     },
@@ -485,18 +495,19 @@ private fun AuthenticatedVaultHost(
                                         cardsState = cardsState,
                                         nfcStatus = nfcStatus,
                                         recentTapEvents = recentHceEvents,
-                                        onCardClick = { card -> selectedCardId = card.id },
+                                        onCardClick = { card -> viewModel.setSelectedCardId(card.id) },
                                         onToggleHce = { card -> viewModel.toggleActiveHce(card, syncHceAid) },
                                         onDeleteCard = { card ->
                                             viewModel.deleteCard(card, syncHceAid) {
                                                 if (selectedCardId == card.id) {
-                                                    selectedCardId = null
+                                                    viewModel.setSelectedCardId(null)
                                                 }
                                             }
                                         },
+                                        onRetrySync = { viewModel.retryCloudSync() },
                                         onNavigateToScan = {
                                             physicalScanRequestNonce++
-                                            activeTab = VaultTab.SCAN
+                                            viewModel.setActiveTabKey(VaultTab.SCAN.name)
                                         },
                                         onOpenNfcSettings = openNfcSettings,
                                         onLockVaultNow = { viewModel.lockVaultNow() }
@@ -519,7 +530,7 @@ private fun AuthenticatedVaultHost(
                                                 onResult = onDone
                                             )
                                         },
-                                        onNavigateBackToWallet = { activeTab = VaultTab.WALLET }
+                                        onNavigateBackToWallet = { viewModel.setActiveTabKey(VaultTab.WALLET.name) }
                                     )
 
                                     VaultTab.SECURITY -> SecuritySettingsScreen(
@@ -539,7 +550,7 @@ private fun AuthenticatedVaultHost(
                                             HceQuickTileService.requestTileSync(context)
                                         },
                                         onSignOut = performSignOut,
-                                        onOpenNfcDebug = { showNfcDebugScreen = true },
+                                        onOpenNfcDebug = { viewModel.setShowNfcDebugScreen(true) },
                                         onAddQuickTile = {
                                             HceQuickTileService.requestAddTileToSystem(context) { msg ->
                                                 scope.launch {

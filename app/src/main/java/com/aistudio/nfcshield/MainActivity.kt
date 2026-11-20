@@ -1,7 +1,9 @@
 package com.aistudio.nfcshield
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.nfc.NfcAdapter
 import android.nfc.Tag
@@ -13,10 +15,13 @@ import android.widget.TextView
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.aistudio.nfcshield.nfc.HceAidManager
+import com.aistudio.nfcshield.nfc.HceQuickTileService
 import com.aistudio.nfcshield.nfc.HceRuntimeBus
 import com.aistudio.nfcshield.nfc.NfcTagParser
 import com.aistudio.nfcshield.ui.VaultAppRoot
@@ -34,6 +39,19 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MainActivity : FragmentActivity() {
     private var nfcAdapter: NfcAdapter? = null
     private var isResumed = false
+    private var nfcStateReceiverRegistered = false
+
+    private val nfcStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != NfcAdapter.ACTION_ADAPTER_STATE_CHANGED) return
+            val state = intent.getIntExtra(NfcAdapter.EXTRA_ADAPTER_STATE, -1)
+            if (state == NfcAdapter.STATE_ON && isResumed) {
+                rebuildNfcListeners("ACTION_ADAPTER_STATE_CHANGED:STATE_ON")
+            } else if (state == NfcAdapter.STATE_OFF || state == NfcAdapter.STATE_TURNING_OFF) {
+                syncReaderMode(false)
+            }
+        }
+    }
 
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
         logStartupException("MainActivity.lifecycleScope", throwable)
@@ -123,12 +141,23 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        try {
+            refreshNfcAdapter()
+            registerNfcStateReceiver()
+            HceQuickTileService.requestTileSync(this)
+            recordInitStep("MainActivity.onStart (nfcAvailable=${nfcAdapter != null})")
+        } catch (t: Throwable) {
+            logStartupException("MainActivity.onStart", t)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         try {
             isResumed = true
-            recordInitStep("MainActivity.onResume")
-            syncReaderMode(HceRuntimeBus.readerModeActive.value)
+            rebuildNfcListeners("MainActivity.onResume")
         } catch (t: Throwable) {
             logStartupException("MainActivity.onResume", t)
         }
@@ -145,8 +174,68 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onStop() {
+        try {
+            unregisterNfcStateReceiver()
+        } catch (t: Throwable) {
+            logStartupException("MainActivity.onStop", t)
+        } finally {
+            super.onStop()
+        }
+    }
+
+    private fun refreshNfcAdapter() {
+        nfcAdapter = runCatching { NfcAdapter.getDefaultAdapter(this) }
+            .onFailure { logStartupException("MainActivity.refreshNfcAdapter", it) }
+            .getOrNull()
+    }
+
+    private fun registerNfcStateReceiver() {
+        if (nfcStateReceiverRegistered) return
+        val filter = IntentFilter(NfcAdapter.ACTION_ADAPTER_STATE_CHANGED)
+        nfcStateReceiverRegistered = runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                nfcStateReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }.onFailure { err ->
+            Log.w(STARTUP_LOG_TAG, "Failed to register NFC state receiver: ${err.message}")
+        }.isSuccess
+    }
+
+    private fun unregisterNfcStateReceiver() {
+        if (!nfcStateReceiverRegistered) return
+        nfcStateReceiverRegistered = false
+        runCatching { unregisterReceiver(nfcStateReceiver) }
+            .onFailure { err ->
+                Log.w(STARTUP_LOG_TAG, "Failed to unregister NFC state receiver: ${err.message}")
+            }
+    }
+
+    /**
+     * Re-acquires the platform NFC adapter, re-binds active HCE AID routing if a card is active,
+     * and restores foreground ReaderMode so NFC scanning/emulation never stalls after lock screen
+     * or background suspension.
+     */
+    private fun rebuildNfcListeners(reason: String) {
+        refreshNfcAdapter()
+        recordInitStep("$reason (readerActive=${HceRuntimeBus.readerModeActive.value}, nfcEnabled=${runCatching { nfcAdapter?.isEnabled }.getOrNull()})")
+        syncReaderMode(HceRuntimeBus.readerModeActive.value)
+        val activeAid = HceRuntimeBus.getCachedActiveCard()?.aidHex
+        if (!activeAid.isNullOrBlank()) {
+            runCatching { HceAidManager.syncDynamicAid(this, activeAid) }
+                .onFailure { Log.w(STARTUP_LOG_TAG, "HCE dynamic AID re-sync skipped: ${it.message}") }
+        }
+    }
+
     private fun syncReaderMode(active: Boolean) {
-        val adapter = nfcAdapter ?: return
+        if (isFinishing || isDestroyed) return
+        val adapter = nfcAdapter ?: run {
+            refreshNfcAdapter()
+            nfcAdapter
+        } ?: return
         try {
             if (active && isResumed && adapter.isEnabled) {
                 val flags = NfcAdapter.FLAG_READER_NFC_A or

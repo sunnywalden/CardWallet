@@ -68,6 +68,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +89,8 @@ import com.aistudio.nfcshield.data.model.HceTapEvent
 import com.aistudio.nfcshield.data.model.UiState
 import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.ui.components.AccessCardVisual
+import com.aistudio.nfcshield.ui.components.CardTagFilterRow
+import com.aistudio.nfcshield.ui.components.CardTagPillsRow
 import com.aistudio.nfcshield.ui.components.DeleteCardConfirmDialog
 import com.aistudio.nfcshield.ui.components.SwipeToDeleteCardContainer
 import com.aistudio.nfcshield.ui.components.resolvedIcon
@@ -116,15 +119,19 @@ fun WalletHomeScreen(
     onCardClick: (DecryptedAccessCard) -> Unit,
     onToggleHce: (DecryptedAccessCard) -> Unit,
     onDeleteCard: (DecryptedAccessCard) -> Unit = {},
+    onRetrySync: () -> Unit = {},
     onNavigateToScan: () -> Unit,
     onOpenNfcSettings: () -> Unit,
     onLockVaultNow: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    var searchExpanded by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf(HomeCardFilter.ALL) }
+    var searchExpanded by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedFilterName by rememberSaveable { mutableStateOf(HomeCardFilter.ALL.name) }
+    val selectedFilter = HomeCardFilter.entries.firstOrNull { it.name == selectedFilterName }
+        ?: HomeCardFilter.ALL
+    var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDeleteCard by remember { mutableStateOf<DecryptedAccessCard?>(null) }
     val revealedCardIds = remember { mutableSetOf<String>() }
     var initialLoadBatchPending by remember { mutableStateOf(true) }
@@ -279,12 +286,33 @@ fun WalletHomeScreen(
                                     .padding(24.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = errMsg,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = VaultRose,
-                                    textAlign = TextAlign.Center
-                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    Text(
+                                        text = errMsg,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = VaultRose,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Button(
+                                        onClick = onRetrySync,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = colorScheme.primary,
+                                            contentColor = colorScheme.onPrimary
+                                        ),
+                                        shape = RoundedCornerShape(14.dp),
+                                        modifier = Modifier
+                                            .height(48.dp)
+                                            .testTag("wallet_error_retry_sync")
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.vault_sync_retry_button),
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
                             }
                         }
 
@@ -296,6 +324,21 @@ fun WalletHomeScreen(
                             }
                             val hceCount = remember(allCards) { allCards.count { it.hceSupported } }
                             val physicalCount = remember(allCards) { allCards.count { !it.hceSupported } }
+                            val tagCounts = remember(allCards) {
+                                allCards
+                                    .flatMap { it.tags }
+                                    .groupingBy { it }
+                                    .eachCount()
+                                    .entries
+                                    .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+                                    .map { it.key to it.value }
+                            }
+
+                            LaunchedEffect(tagCounts) {
+                                if (selectedTag != null && tagCounts.none { it.first == selectedTag }) {
+                                    selectedTag = null
+                                }
+                            }
 
                             LaunchedEffect(allCards.isNotEmpty()) {
                                 if (allCards.isNotEmpty() && initialLoadBatchPending) {
@@ -304,8 +347,10 @@ fun WalletHomeScreen(
                                 }
                             }
 
-                            val isFilteringOrSearching = searchQuery.isNotBlank() || selectedFilter != HomeCardFilter.ALL
-                            val listCards = remember(allCards, focalCard, searchQuery, selectedFilter) {
+                            val isFilteringOrSearching = searchQuery.isNotBlank() ||
+                                selectedFilter != HomeCardFilter.ALL ||
+                                selectedTag != null
+                            val listCards = remember(allCards, focalCard, searchQuery, selectedFilter, selectedTag) {
                                 val basePool = if (isFilteringOrSearching) {
                                     allCards
                                 } else {
@@ -317,13 +362,15 @@ fun WalletHomeScreen(
                                         HomeCardFilter.HCE_EMULATED -> card.hceSupported
                                         HomeCardFilter.PHYSICAL_READ -> !card.hceSupported
                                     }
+                                    val matchesTag = selectedTag == null || card.tags.contains(selectedTag)
                                     val q = searchQuery.trim()
                                     val matchesQuery = q.isEmpty() ||
                                         card.label.contains(q, ignoreCase = true) ||
                                         card.secrets.uidHex.contains(q, ignoreCase = true) ||
                                         card.secrets.aidHex.contains(q, ignoreCase = true) ||
-                                        card.secrets.notes.contains(q, ignoreCase = true)
-                                    matchesFilter && matchesQuery
+                                        card.secrets.notes.contains(q, ignoreCase = true) ||
+                                        card.tags.any { it.contains(q, ignoreCase = true) }
+                                    matchesFilter && matchesTag && matchesQuery
                                 }
                             }
 
@@ -449,7 +496,7 @@ fun WalletHomeScreen(
                                                     ModeFilterChip(
                                                         selected = selectedFilter == HomeCardFilter.ALL,
                                                         label = "${stringResource(R.string.wallet_filter_all)} ${allCards.size}",
-                                                        onClick = { selectedFilter = HomeCardFilter.ALL },
+                                                        onClick = { selectedFilterName = HomeCardFilter.ALL.name },
                                                         tag = "filter_all_chip"
                                                     )
                                                 }
@@ -457,7 +504,7 @@ fun WalletHomeScreen(
                                                     ModeFilterChip(
                                                         selected = selectedFilter == HomeCardFilter.HCE_EMULATED,
                                                         label = "${stringResource(R.string.wallet_filter_hce)} $hceCount",
-                                                        onClick = { selectedFilter = HomeCardFilter.HCE_EMULATED },
+                                                        onClick = { selectedFilterName = HomeCardFilter.HCE_EMULATED.name },
                                                         tag = "filter_hce_chip"
                                                     )
                                                 }
@@ -465,11 +512,16 @@ fun WalletHomeScreen(
                                                     ModeFilterChip(
                                                         selected = selectedFilter == HomeCardFilter.PHYSICAL_READ,
                                                         label = "${stringResource(R.string.wallet_filter_physical)} $physicalCount",
-                                                        onClick = { selectedFilter = HomeCardFilter.PHYSICAL_READ },
+                                                        onClick = { selectedFilterName = HomeCardFilter.PHYSICAL_READ.name },
                                                         tag = "filter_physical_chip"
                                                     )
                                                 }
                                             }
+                                            CardTagFilterRow(
+                                                tagCounts = tagCounts,
+                                                selectedTag = selectedTag,
+                                                onSelectTag = { selectedTag = it }
+                                            )
                                         }
                                     }
                                 }
@@ -891,6 +943,14 @@ private fun VaultCardListRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
+                if (card.tags.isNotEmpty()) {
+                    CardTagPillsRow(
+                        tags = card.tags,
+                        accentColor = accent,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
             }
 
             if (card.hceSupported) {

@@ -24,6 +24,8 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -82,6 +85,7 @@ fun VaultLockScreen(
     onBiometricSuccess: (onFallbackMsg: (String?) -> Unit) -> Unit,
     onClearError: () -> Unit,
     onSignOut: () -> Unit,
+    onRetrySync: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -147,11 +151,39 @@ fun VaultLockScreen(
                         color = VaultTextSecondary,
                         textAlign = TextAlign.Center
                     )
+                    if (gateState.message.contains("PERMISSION_DENIED", ignoreCase = true)) {
+                        Text(
+                            text = stringResource(R.string.vault_sync_permission_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = VaultTextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Button(
+                        onClick = onRetrySync,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colorScheme.primary,
+                            contentColor = colorScheme.onPrimary
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("vault_error_retry_sync")
+                    ) {
+                        Text(
+                            text = stringResource(R.string.vault_sync_retry_button),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                     OutlinedButton(
                         onClick = onSignOut,
                         border = BorderStroke(1.dp, VaultHairlineStrong),
                         shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.testTag("vault_error_sign_out")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("vault_error_sign_out")
                     ) {
                         Text("切换或退出 Google 账号", color = VaultTextPrimary)
                     }

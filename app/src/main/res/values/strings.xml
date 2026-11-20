@@ -98,4 +98,31 @@
     <string name="nfc_monitor_unsupported_subtitle">仍可使用云端加密卡包管理门禁凭证</string>
     <string name="nfc_monitor_open_settings">去开启</string>
     <string name="nfc_monitor_live_badge">LIVE</string>
+
+    <!-- Card Detail Floating HCE Dock -->
+    <string name="detail_hce_emulating_title">HCE 正在模拟中</string>
+    <string name="detail_hce_emulating_subtitle">贴近读卡器即可感应刷卡 · AID %1$s</string>
+    <string name="detail_hce_standby_title">HCE 模拟待机</string>
+    <string name="detail_hce_standby_subtitle">开启开关即可设为当前活跃模拟卡</string>
+    <string name="detail_hce_nfc_off_title">HCE 已开启 · 系统 NFC 未启用</string>
+    <string name="detail_hce_nfc_off_subtitle">点击前往系统设置开启 NFC 后即可刷卡</string>
+    <string name="detail_hce_hw_unsupported_title">HCE 已激活 · 设备无 HCE 硬件</string>
+    <string name="detail_hce_hw_unsupported_subtitle">仅云端加密保存，无法在本机模拟刷卡</string>
+    <string name="detail_hce_readonly_title">物理只读卡片 · 不支持 HCE</string>
+    <string name="detail_hce_readonly_subtitle">%1$s 协议仅支持加密存档与查看</string>
+    <string name="detail_hce_switch_cd">切换 HCE 模拟开关</string>
+    <string name="detail_hce_indicator_emulating_cd">正在模拟中指示器</string>
+    <string name="detail_hce_indicator_idle_cd">未在模拟状态指示器</string>
+
+    <!-- Vault Sync Error & Recovery -->
+    <string name="vault_sync_retry_button">重新连接云端保险库</string>
+    <string name="vault_sync_permission_hint">锁屏唤醒后登录会话或安全令牌可能正在刷新，请点击重试连接；若持续受限请重新登录 Google 账号。</string>
+
+    <!-- Card Tags & Multi-card Filtering -->
+    <string name="wallet_tag_filter_all">全部标签</string>
+    <string name="wallet_tag_empty_hint">在扫描或卡片详情中可添加标签</string>
+    <string name="card_tags_section_title">自定义标签（便于首页快速筛选）</string>
+    <string name="card_tag_input_placeholder">输入新标签（如：地铁、北门）</string>
+    <string name="card_tag_add_button">添加</string>
+    <string name="card_tag_remove_cd">移除标签 %1$s</string>
 </resources>

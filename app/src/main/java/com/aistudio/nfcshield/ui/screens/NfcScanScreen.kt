@@ -51,6 +51,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,10 +69,12 @@ import com.aistudio.nfcshield.data.model.CardAccentColor
 import com.aistudio.nfcshield.data.model.CardCategory
 import com.aistudio.nfcshield.data.model.CardSecretsPayload
 import com.aistudio.nfcshield.data.model.NfcTechType
+import com.aistudio.nfcshield.data.model.normalizeCardTags
 import com.aistudio.nfcshield.nfc.HceRuntimeBus
 import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.nfc.NfcTagParser
 import com.aistudio.nfcshield.nfc.ScannedNfcTagInfo
+import com.aistudio.nfcshield.ui.components.CardTagEditor
 import com.aistudio.nfcshield.ui.components.NfcRadarScanner
 import com.aistudio.nfcshield.ui.components.toColor
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
@@ -110,24 +113,32 @@ fun NfcScanScreen(
 ) {
     val haptic = LocalHapticFeedback.current
 
-    var selectedTab by remember(nfcStatus.nfcSupported) {
+    var selectedTab by rememberSaveable(nfcStatus.nfcSupported) {
         mutableIntStateOf(if (nfcStatus.nfcSupported || physicalScanRequestNonce > 0) 0 else 1)
     } // 0 = Hardware Scan, 1 = Manual HCE
     var scannedTag by remember { mutableStateOf<ScannedNfcTagInfo?>(null) }
 
-    var label by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(CardCategory.RESIDENCE) }
-    var accentColor by remember { mutableStateOf(CardAccentColor.CYAN) }
-    var uidHexInput by remember { mutableStateOf("") }
-    var aidHexInput by remember { mutableStateOf(NfcTagParser.DEFAULT_HCE_AID) }
-    var apduResponseInput by remember { mutableStateOf("") }
-    var notesInput by remember { mutableStateOf("") }
-    var activateHceNow by remember { mutableStateOf(true) }
+    var label by rememberSaveable { mutableStateOf("") }
+    var categoryName by rememberSaveable { mutableStateOf(CardCategory.RESIDENCE.name) }
+    val category = CardCategory.fromRaw(categoryName)
+    var accentColorName by rememberSaveable { mutableStateOf(CardAccentColor.CYAN.name) }
+    val accentColor = CardAccentColor.fromRaw(accentColorName)
+    var uidHexInput by rememberSaveable { mutableStateOf("") }
+    var aidHexInput by rememberSaveable { mutableStateOf(NfcTagParser.DEFAULT_HCE_AID) }
+    var apduResponseInput by rememberSaveable { mutableStateOf("") }
+    var notesInput by rememberSaveable { mutableStateOf("") }
+    var selectedTagsJoined by rememberSaveable { mutableStateOf("") }
+    val selectedTags = remember(selectedTagsJoined) {
+        normalizeCardTags(selectedTagsJoined.split('\u001F'))
+    }
+    var activateHceNow by rememberSaveable { mutableStateOf(true) }
     var isSaving by remember { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
+    var lastConsumedScanNonce by rememberSaveable { mutableIntStateOf(physicalScanRequestNonce) }
 
     LaunchedEffect(physicalScanRequestNonce) {
-        if (physicalScanRequestNonce > 0) {
+        if (physicalScanRequestNonce > lastConsumedScanNonce) {
+            lastConsumedScanNonce = physicalScanRequestNonce
             selectedTab = 0
             scannedTag = null
             HceRuntimeBus.consumeScannedTagInfo()
@@ -136,6 +147,7 @@ fun NfcScanScreen(
             aidHexInput = NfcTagParser.DEFAULT_HCE_AID
             apduResponseInput = ""
             notesInput = ""
+            selectedTagsJoined = ""
             formError = null
         }
     }
@@ -430,7 +442,7 @@ fun NfcScanScreen(
                             val selected = category == item
                             FilterChip(
                                 selected = selected,
-                                onClick = { category = item },
+                                onClick = { categoryName = item.name },
                                 label = { Text(item.displayName, style = MaterialTheme.typography.labelMedium) },
                                 shape = CircleShape,
                                 colors = FilterChipDefaults.filterChipColors(
@@ -464,7 +476,7 @@ fun NfcScanScreen(
                                         color = if (selected) c else VaultHairline,
                                         shape = CircleShape
                                     )
-                                    .clickable { accentColor = accent },
+                                    .clickable { accentColorName = accent.name },
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (selected) {
@@ -478,6 +490,13 @@ fun NfcScanScreen(
                             }
                         }
                     }
+
+                    CardTagEditor(
+                        tags = selectedTags,
+                        onTagsChange = { updated ->
+                            selectedTagsJoined = normalizeCardTags(updated).joinToString("\u001F")
+                        }
+                    )
 
                     OutlinedTextField(
                         value = uidHexInput,
@@ -591,7 +610,8 @@ fun NfcScanScreen(
                                 apduResponseHex = cleanApdu,
                                 ndefSummary = tagSnapshot?.ndefSummary.orEmpty(),
                                 techList = tagSnapshot?.techList ?: listOf(effectivePrimaryTech.name),
-                                notes = notesInput.trim()
+                                notes = notesInput.trim(),
+                                tags = selectedTags
                             )
                             onSaveCard(
                                 cleanLabel,

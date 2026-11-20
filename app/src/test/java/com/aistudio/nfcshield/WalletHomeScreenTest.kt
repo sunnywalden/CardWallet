@@ -37,7 +37,8 @@ class WalletHomeScreenTest {
         id: String,
         label: String,
         activeHce: Boolean,
-        hceSupported: Boolean = true
+        hceSupported: Boolean = true,
+        tags: List<String> = emptyList()
     ) = DecryptedAccessCard(
         id = id,
         label = label,
@@ -53,7 +54,8 @@ class WalletHomeScreenTest {
         updatedAt = null,
         secrets = CardSecretsPayload(
             uidHex = "04:11:22:A1",
-            aidHex = if (hceSupported) "F04E464353484945" else ""
+            aidHex = if (hceSupported) "F04E464353484945" else "",
+            tags = tags
         )
     )
 
@@ -189,5 +191,65 @@ class WalletHomeScreenTest {
 
         composeRule.onNodeWithTag("delete_card_confirm_dialog").assertDoesNotExist()
         assertEquals("list-2", deletedCardId)
+    }
+
+    @Test
+    fun `tag filter chip group filters cards by tag and resets cleanly`() {
+        val commuteHero = sampleCard(
+            id = "hero-commute",
+            label = "长安通公交卡",
+            activeHce = true,
+            tags = listOf("通勤", "高频")
+        )
+        val officeCard = sampleCard(
+            id = "card-office",
+            label = "总部研发门禁",
+            activeHce = false,
+            tags = listOf("办公", "高频")
+        )
+        val homeCard = sampleCard(
+            id = "card-home",
+            label = "南门小区门禁",
+            activeHce = false,
+            tags = listOf("家门")
+        )
+
+        composeRule.setContent {
+            ObsidianTheme {
+                WalletHomeScreen(
+                    cardsState = UiState.Success(listOf(commuteHero, officeCard, homeCard)),
+                    nfcStatus = readyNfcStatus,
+                    recentTapEvents = emptyList(),
+                    onCardClick = {},
+                    onToggleHce = {},
+                    onNavigateToScan = {},
+                    onOpenNfcSettings = {},
+                    onLockVaultNow = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Tag filter row and tag chips render
+        composeRule.onNodeWithTag("wallet_tag_filter_row").assertIsDisplayed()
+        composeRule.onNodeWithTag("tag_filter_all_chip").assertIsDisplayed()
+        composeRule.onNodeWithTag("tag_filter_chip_高频").assertIsDisplayed()
+        composeRule.onNodeWithTag("tag_filter_chip_通勤").assertIsDisplayed()
+
+        // Selecting "通勤" filters the results list down to only the matching card
+        composeRule.onNodeWithTag("tag_filter_chip_通勤").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("swipe_delete_container_hero-commute").assertIsDisplayed()
+        composeRule.onNodeWithTag("swipe_delete_container_card-office").assertDoesNotExist()
+        composeRule.onNodeWithTag("swipe_delete_container_card-home").assertDoesNotExist()
+
+        // Selecting "全部标签" restores full card list and top focal card
+        composeRule.onNodeWithTag("tag_filter_all_chip").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("wallet_hero_focal_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("swipe_delete_container_card-office").assertIsDisplayed()
+        composeRule.onNodeWithTag("swipe_delete_container_card-home").assertIsDisplayed()
     }
 }

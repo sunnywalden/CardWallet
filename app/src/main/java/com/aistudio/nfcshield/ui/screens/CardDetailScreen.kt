@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -72,8 +73,13 @@ import com.aistudio.nfcshield.data.model.CardCategory
 import com.aistudio.nfcshield.data.model.CardIconOption
 import com.aistudio.nfcshield.data.model.CardSecretsPayload
 import com.aistudio.nfcshield.data.model.DecryptedAccessCard
+import com.aistudio.nfcshield.data.model.HceTapEvent
+import com.aistudio.nfcshield.data.model.normalizeCardTags
+import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.nfc.NfcTagParser
 import com.aistudio.nfcshield.ui.components.AccessCardVisual
+import com.aistudio.nfcshield.ui.components.CardTagEditor
+import com.aistudio.nfcshield.ui.components.FloatingHceEmulationBar
 import com.aistudio.nfcshield.ui.components.toColor
 import com.aistudio.nfcshield.ui.components.toIcon
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
@@ -112,6 +118,9 @@ fun CardDetailScreen(
     ) -> Unit,
     onDeleteCard: (DecryptedAccessCard) -> Unit,
     onShowMessage: (String) -> Unit,
+    nfcStatus: NfcHardwareStatus? = null,
+    latestTapEvent: HceTapEvent? = null,
+    onOpenNfcSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
@@ -129,6 +138,7 @@ fun CardDetailScreen(
     var editCategory by remember(card.id, card.category) { mutableStateOf(card.category) }
     var editAccentColor by remember(card.id, card.accentColor) { mutableStateOf(card.accentColor) }
     var editIconOption by remember(card.id, card.secrets.iconKey) { mutableStateOf(initialIconOption) }
+    var editTags by remember(card.id, card.tags) { mutableStateOf(normalizeCardTags(card.tags)) }
 
     var editAid by remember(card.id, card.secrets.aidHex) { mutableStateOf(card.secrets.aidHex) }
     var editApdu by remember(card.id, card.secrets.apduResponseHex) { mutableStateOf(card.secrets.apduResponseHex) }
@@ -138,19 +148,22 @@ fun CardDetailScreen(
     var customizeError by remember { mutableStateOf<String?>(null) }
     var advancedError by remember { mutableStateOf<String?>(null) }
 
+    val normalizedEditTags = remember(editTags) { normalizeCardTags(editTags) }
     val hasAppearanceChanges = editLabel.trim() != card.label ||
         editCategory != card.category ||
         editAccentColor != card.accentColor ||
-        editIconOption != initialIconOption
+        editIconOption != initialIconOption ||
+        normalizedEditTags != normalizeCardTags(card.tags)
 
-    // Live interactive card preview reflecting rename, personalized icon & accent color edits
-    val previewCard = remember(card, editLabel, editCategory, editAccentColor, editIconOption) {
+    // Live interactive card preview reflecting rename, personalized icon, accent color & tags edits
+    val previewCard = remember(card, editLabel, editCategory, editAccentColor, editIconOption, normalizedEditTags) {
         val nextIconKey = if (editIconOption == CardIconOption.AUTO) "" else editIconOption.name
         card.copy(
             label = editLabel.trim().ifEmpty { card.label },
             category = editCategory,
             accentColor = editAccentColor,
-            secrets = card.secrets.copy(iconKey = nextIconKey)
+            secrets = card.secrets.copy(iconKey = nextIconKey, tags = normalizedEditTags),
+            tags = normalizedEditTags
         )
     }
 
@@ -163,14 +176,18 @@ fun CardDetailScreen(
 
     val colorScheme = MaterialTheme.colorScheme
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 112.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         Column(
             modifier = Modifier
                 .widthIn(max = 620.dp)
@@ -465,6 +482,11 @@ fun CardDetailScreen(
                         }
                     }
 
+                    CardTagEditor(
+                        tags = normalizedEditTags,
+                        onTagsChange = { editTags = normalizeCardTags(it) }
+                    )
+
                     if (customizeError != null) {
                         Text(
                             text = customizeError.orEmpty(),
@@ -488,11 +510,14 @@ fun CardDetailScreen(
                                 cleanLabel,
                                 editCategory,
                                 editAccentColor,
-                                card.secrets.copy(iconKey = nextIconKey)
+                                card.secrets.copy(
+                                    iconKey = nextIconKey,
+                                    tags = normalizedEditTags
+                                )
                             ) { res ->
                                 isSavingCustomization = false
                                 if (res.isSuccess) {
-                                    onShowMessage("已重新加密保存卡片名称与个性化图标")
+                                    onShowMessage("已重新加密保存卡片外观与标签")
                                 } else {
                                     customizeError = res.exceptionOrNull()?.localizedMessage ?: "保存失败，请重试"
                                 }
@@ -768,7 +793,8 @@ fun CardDetailScreen(
                                             aidHex = if (card.hceSupported) cleanAid.ifEmpty { NfcTagParser.DEFAULT_HCE_AID } else card.secrets.aidHex,
                                             apduResponseHex = cleanApdu,
                                             notes = editNotes.trim(),
-                                            iconKey = nextIconKey
+                                            iconKey = nextIconKey,
+                                            tags = normalizedEditTags
                                         )
                                     ) { res ->
                                         if (res.isSuccess) {
@@ -794,6 +820,20 @@ fun CardDetailScreen(
                 }
             }
         }
+        }
+
+        FloatingHceEmulationBar(
+            card = card,
+            nfcStatus = nfcStatus,
+            latestTapEvent = latestTapEvent,
+            onToggleHce = { onToggleHce(card) },
+            onOpenNfcSettings = onOpenNfcSettings,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 14.dp)
+                .widthIn(max = 620.dp)
+        )
     }
 
     if (showDeleteDialog) {

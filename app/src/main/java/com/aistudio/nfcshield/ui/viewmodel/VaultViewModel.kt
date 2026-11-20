@@ -2,6 +2,7 @@ package com.aistudio.nfcshield.ui.viewmodel
 
 import android.os.SystemClock
 import android.util.Log
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aistudio.nfcshield.crypto.Aes256GcmCryptoUtil
@@ -23,12 +24,14 @@ import com.aistudio.nfcshield.data.model.HceTapEvent
 import com.aistudio.nfcshield.data.model.NfcTechType
 import com.aistudio.nfcshield.data.model.UiState
 import com.aistudio.nfcshield.data.model.VaultConfigDoc
+import com.aistudio.nfcshield.data.model.VaultSavedStateCodec
 import com.aistudio.nfcshield.data.remote.FirestoreVaultRepository
 import com.aistudio.nfcshield.nfc.HceRuntimeBus
 import com.aistudio.nfcshield.nfc.NfcTagParser
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,7 +40,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,7 +75,8 @@ sealed interface BiometricUnlockChallenge {
 class VaultViewModel(
     private val repository: FirestoreVaultRepository,
     private val localStore: LocalVaultStore,
-    val currentUserId: String
+    val currentUserId: String,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle()
 ) : ViewModel() {
 
     private val _dekState = MutableStateFlow<ByteArray?>(null)
@@ -84,8 +90,90 @@ class VaultViewModel(
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
+    val activeTabKey: StateFlow<String> =
+        savedStateHandle.getStateFlow(KEY_ACTIVE_TAB, DEFAULT_TAB_KEY)
+    val selectedCardId: StateFlow<String?> =
+        savedStateHandle.getStateFlow<String?>(KEY_SELECTED_CARD_ID, null)
+    val showNfcDebugScreen: StateFlow<Boolean> =
+        savedStateHandle.getStateFlow(KEY_SHOW_NFC_DEBUG, false)
+    val debugReaderModeEnabled: StateFlow<Boolean> =
+        savedStateHandle.getStateFlow(KEY_DEBUG_READER_ENABLED, true)
+
+    private val _syncRetryTrigger = MutableStateFlow(0)
+    private val hasMatchingSavedOwner: Boolean =
+        savedStateHandle.get<String>(KEY_OWNER_UID) == currentUserId
+
+    private var lastKnownVaultConfig: VaultConfigDoc? = if (hasMatchingSavedOwner) {
+        VaultSavedStateCodec.decodeVaultConfig(savedStateHandle.get<String>(KEY_VAULT_CONFIG_JSON))
+            ?.takeIf { it.userId == currentUserId }
+    } else {
+        null
+    }
+
+    private var lastKnownEncryptedCards: List<EncryptedCardDoc>? = if (hasMatchingSavedOwner) {
+        VaultSavedStateCodec.decodeEncryptedCards(savedStateHandle.get<String>(KEY_ENCRYPTED_CARDS_JSON))
+            ?.filter { it.userId.isBlank() || it.userId == currentUserId }
+    } else {
+        null
+    }
+
     private var lockoutJob: Job? = null
-    private var backgroundTimestampElapsedMillis: Long? = null
+    private var backgroundTimestampElapsedMillis: Long? =
+        if (hasMatchingSavedOwner) {
+            savedStateHandle.get<Long>(KEY_BACKGROUND_ELAPSED_MS)?.takeIf { it > 0L }
+        } else {
+            null
+        }
+
+    init {
+        if (!hasMatchingSavedOwner) {
+            clearSavedStateKeys()
+            savedStateHandle[KEY_OWNER_UID] = currentUserId
+        }
+    }
+
+    fun setActiveTabKey(tabKey: String) {
+        savedStateHandle[KEY_ACTIVE_TAB] = tabKey
+    }
+
+    fun setSelectedCardId(cardId: String?) {
+        savedStateHandle[KEY_SELECTED_CARD_ID] = cardId
+    }
+
+    fun setShowNfcDebugScreen(show: Boolean) {
+        savedStateHandle[KEY_SHOW_NFC_DEBUG] = show
+    }
+
+    fun setDebugReaderModeEnabled(enabled: Boolean) {
+        savedStateHandle[KEY_DEBUG_READER_ENABLED] = enabled
+    }
+
+    private fun persistVaultConfigToSavedState(config: VaultConfigDoc?) {
+        savedStateHandle[KEY_OWNER_UID] = currentUserId
+        if (config != null) {
+            savedStateHandle[KEY_VAULT_CONFIG_JSON] = VaultSavedStateCodec.encodeVaultConfig(config)
+        } else {
+            savedStateHandle.remove<String>(KEY_VAULT_CONFIG_JSON)
+        }
+    }
+
+    private fun persistEncryptedCardsToSavedState(docs: List<EncryptedCardDoc>) {
+        savedStateHandle[KEY_OWNER_UID] = currentUserId
+        val encoded = VaultSavedStateCodec.encodeEncryptedCards(docs)
+        if (encoded != null) {
+            savedStateHandle[KEY_ENCRYPTED_CARDS_JSON] = encoded
+        }
+    }
+
+    private fun clearSavedStateKeys() {
+        savedStateHandle.remove<String>(KEY_OWNER_UID)
+        savedStateHandle.remove<String>(KEY_VAULT_CONFIG_JSON)
+        savedStateHandle.remove<String>(KEY_ENCRYPTED_CARDS_JSON)
+        savedStateHandle.remove<String>(KEY_SELECTED_CARD_ID)
+        savedStateHandle.remove<Boolean>(KEY_SHOW_NFC_DEBUG)
+        savedStateHandle.remove<Long>(KEY_BACKGROUND_ELAPSED_MS)
+        savedStateHandle[KEY_ACTIVE_TAB] = DEFAULT_TAB_KEY
+    }
 
     val securityPrefs: StateFlow<LocalSecurityPreferences> = localStore.preferencesFlow
         .stateIn(
@@ -94,41 +182,91 @@ class VaultViewModel(
             initialValue = LocalSecurityPreferences()
         )
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val vaultConfigStream: StateFlow<UiState<VaultConfigDoc?>> =
-        repository.observeVaultConfig(currentUserId)
-            .map<VaultConfigDoc?, UiState<VaultConfigDoc?>> { UiState.Success(it) }
-            .catch { error ->
-                val firestoreError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>()
-                    .firstOrNull()
-                if (firestoreError == null && error is CancellationException) throw error
-                val rootError = firestoreError ?: error
-                Log.w(TAG, "Error observing vault config", rootError)
-                emit(UiState.Error(rootError.localizedMessage ?: "无法连接云端保险库配置"))
-            }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = UiState.Loading
-            )
+        _syncRetryTrigger.flatMapLatest {
+            repository.observeVaultConfig(currentUserId)
+                .map<VaultConfigDoc?, UiState<VaultConfigDoc?>> { cfg ->
+                    if (cfg != null) {
+                        lastKnownVaultConfig = cfg
+                        persistVaultConfigToSavedState(cfg)
+                    }
+                    UiState.Success(cfg)
+                }
+                .onStart {
+                    val cached = lastKnownVaultConfig
+                    if (cached != null) {
+                        emit(UiState.Success(cached))
+                    } else {
+                        emit(UiState.Loading)
+                    }
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    val rootError = firestoreError ?: error
+                    Log.e(
+                        TAG,
+                        "Error observing vault config (hasCachedConfig=${lastKnownVaultConfig != null})",
+                        rootError
+                    )
+                    val cached = lastKnownVaultConfig
+                    if (cached != null) {
+                        _statusMessage.value = "云端同步暂受限，已保留本地保险库状态"
+                        emit(UiState.Success(cached))
+                    } else {
+                        emit(UiState.Error(rootError.localizedMessage ?: "无法连接云端保险库配置"))
+                    }
+                }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = lastKnownVaultConfig?.let { UiState.Success(it) } ?: UiState.Loading
+        )
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val encryptedCardsStream: StateFlow<UiState<List<EncryptedCardDoc>>> =
-        repository.observeEncryptedCards(currentUserId)
-            .map<List<EncryptedCardDoc>, UiState<List<EncryptedCardDoc>>> { UiState.Success(it) }
-            .catch { error ->
-                val firestoreError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>()
-                    .firstOrNull()
-                if (firestoreError == null && error is CancellationException) throw error
-                val rootError = firestoreError ?: error
-                Log.w(TAG, "Error observing cards", rootError)
-                emit(UiState.Error(rootError.localizedMessage ?: "加载云端加密门禁卡失败"))
-            }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = UiState.Loading
-            )
+        _syncRetryTrigger.flatMapLatest {
+            repository.observeEncryptedCards(currentUserId)
+                .map<List<EncryptedCardDoc>, UiState<List<EncryptedCardDoc>>> { docs ->
+                    lastKnownEncryptedCards = docs
+                    persistEncryptedCardsToSavedState(docs)
+                    UiState.Success(docs)
+                }
+                .onStart {
+                    val cached = lastKnownEncryptedCards
+                    if (cached != null) {
+                        emit(UiState.Success(cached))
+                    } else {
+                        emit(UiState.Loading)
+                    }
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    val rootError = firestoreError ?: error
+                    Log.e(
+                        TAG,
+                        "Error observing cards (hasCachedCards=${lastKnownEncryptedCards != null})",
+                        rootError
+                    )
+                    val cached = lastKnownEncryptedCards
+                    if (cached != null) {
+                        _statusMessage.value = "云端卡片同步暂受限，当前显示最近缓存"
+                        emit(UiState.Success(cached))
+                    } else {
+                        emit(UiState.Error(rootError.localizedMessage ?: "加载云端加密门禁卡失败"))
+                    }
+                }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = lastKnownEncryptedCards?.let { UiState.Success(it) } ?: UiState.Loading
+        )
 
     val vaultGateState: StateFlow<VaultGateState> = combine(
         vaultConfigStream,
@@ -234,6 +372,8 @@ class VaultViewModel(
     override fun onCleared() {
         _dekState.value?.fill(0)
         _dekState.value = null
+        lastKnownVaultConfig = null
+        lastKnownEncryptedCards = null
         HceRuntimeBus.setVaultUnlocked(false)
         super.onCleared()
     }
@@ -589,7 +729,9 @@ class VaultViewModel(
 
     fun onAppBackgrounded(): Boolean {
         if (_dekState.value != null) {
-            backgroundTimestampElapsedMillis = SystemClock.elapsedRealtime()
+            val now = SystemClock.elapsedRealtime()
+            backgroundTimestampElapsedMillis = now
+            savedStateHandle[KEY_BACKGROUND_ELAPSED_MS] = now
             if (securityPrefs.value.autoLockMinutes == 0) {
                 lockVaultNow()
                 return true
@@ -598,9 +740,31 @@ class VaultViewModel(
         return false
     }
 
+    fun retryCloudSync() {
+        viewModelScope.launch {
+            repository.refreshSessionCredentials(forceRefresh = true)
+            _syncRetryTrigger.value += 1
+        }
+    }
+
     fun onAppResumed(): Boolean {
-        val bgTime = backgroundTimestampElapsedMillis ?: return false
+        val bgTime = backgroundTimestampElapsedMillis
         backgroundTimestampElapsedMillis = null
+        savedStateHandle.remove<Long>(KEY_BACKGROUND_ELAPSED_MS)
+
+        val hasSyncError = vaultConfigStream.value is UiState.Error ||
+            encryptedCardsStream.value is UiState.Error
+        if (hasSyncError) {
+            retryCloudSync()
+        } else {
+            // Proactively refresh Auth/AppCheck credentials when waking from screen lock
+            // so Firestore reconnects with a valid token instead of failing with PERMISSION_DENIED.
+            viewModelScope.launch {
+                repository.refreshSessionCredentials(forceRefresh = false)
+            }
+        }
+
+        if (bgTime == null) return false
         val limitMin = securityPrefs.value.autoLockMinutes
         if (_dekState.value != null) {
             val elapsedMillis = (SystemClock.elapsedRealtime() - bgTime).coerceAtLeast(0L)
@@ -948,6 +1112,9 @@ class VaultViewModel(
     suspend fun prepareForSignOut() {
         _dekState.value?.fill(0)
         _dekState.value = null
+        lastKnownVaultConfig = null
+        lastKnownEncryptedCards = null
+        clearSavedStateKeys()
         HceRuntimeBus.setVaultUnlocked(false)
         HceRuntimeBus.updateCachedActiveCard(null)
         VaultCryptoEngine.deleteBiometricKeystoreKey()
@@ -996,6 +1163,16 @@ class VaultViewModel(
         private const val STOP_TIMEOUT_MILLIS = 5000L
         private const val MAX_NOTES_LENGTH = 1500
         private const val MAX_ENCRYPTED_PAYLOAD_CHARS = 8192
+
+        internal const val KEY_OWNER_UID = "vault_owner_uid"
+        internal const val KEY_VAULT_CONFIG_JSON = "vault_config_json"
+        internal const val KEY_ENCRYPTED_CARDS_JSON = "vault_encrypted_cards_json"
+        internal const val KEY_ACTIVE_TAB = "vault_active_tab"
+        internal const val KEY_SELECTED_CARD_ID = "vault_selected_card_id"
+        internal const val KEY_SHOW_NFC_DEBUG = "vault_show_nfc_debug"
+        internal const val KEY_DEBUG_READER_ENABLED = "vault_debug_reader_enabled"
+        internal const val KEY_BACKGROUND_ELAPSED_MS = "vault_bg_elapsed_ms"
+        private const val DEFAULT_TAB_KEY = "WALLET"
 
         fun lockoutSecondsFor(failedAttempts: Int): Int = when {
             failedAttempts <= 0 || failedAttempts % 5 != 0 -> 0

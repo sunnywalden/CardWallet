@@ -10,6 +10,7 @@ import com.aistudio.nfcshield.data.model.EncryptedCardDoc
 import com.aistudio.nfcshield.data.model.NfcTechType
 import com.aistudio.nfcshield.data.model.VaultConfigDoc
 import com.google.firebase.Firebase
+import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -19,12 +20,15 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 class FirestoreVaultRepository(
     private val db: FirebaseFirestore,
@@ -45,6 +49,63 @@ class FirestoreVaultRepository(
         return uid
     }
 
+    /**
+     * Proactively refreshes Firebase Auth ID token and Firebase App Check token.
+     * Prevents transient PERMISSION_DENIED errors when the app resumes after device lock/sleep
+     * and the cached token expired while the process was suspended.
+     */
+    suspend fun refreshSessionCredentials(forceRefresh: Boolean = true): Boolean {
+        val user = auth.currentUser ?: return false
+        var authRefreshed = false
+        try {
+            val tokenResult = withTimeoutOrNull(TOKEN_REFRESH_TIMEOUT_MS) {
+                user.getIdToken(forceRefresh).await()
+            }
+            authRefreshed = tokenResult?.token?.isNotBlank() == true
+            if (!authRefreshed) {
+                Log.w(
+                    SYNC_LOG_TAG,
+                    "Auth ID token refresh timed out or returned blank (forceRefresh=$forceRefresh, uidHash=${hashUidPrefix(user.uid)})"
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(
+                SYNC_LOG_TAG,
+                "Auth ID token refresh failed (forceRefresh=$forceRefresh, uidHash=${hashUidPrefix(user.uid)}): ${e.message}",
+                e
+            )
+        }
+
+        try {
+            withTimeoutOrNull(TOKEN_REFRESH_TIMEOUT_MS) {
+                FirebaseAppCheck.getInstance().getAppCheckToken(forceRefresh).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(
+                SYNC_LOG_TAG,
+                "App Check token refresh warning (forceRefresh=$forceRefresh): ${e.message}"
+            )
+        }
+        return authRefreshed
+    }
+
+    private fun isRecoverableResumeError(error: Throwable): FirebaseFirestoreException? {
+        val firestoreError = generateSequence(error) { it.cause }
+            .filterIsInstance<FirebaseFirestoreException>()
+            .firstOrNull() ?: return null
+        return when (firestoreError.code) {
+            FirebaseFirestoreException.Code.PERMISSION_DENIED,
+            FirebaseFirestoreException.Code.UNAVAILABLE,
+            FirebaseFirestoreException.Code.DEADLINE_EXCEEDED,
+            FirebaseFirestoreException.Code.ABORTED -> firestoreError
+            else -> null
+        }
+    }
+
     fun observeVaultConfig(userId: String): Flow<VaultConfigDoc?> = flow {
         val uid = requireUserId(userId)
         val path = "users/$uid/vault/config"
@@ -58,18 +119,38 @@ class FirestoreVaultRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     )
                 }
-                .catch { error ->
-                    val firestoreError = generateSequence(error) { it.cause }
-                        .filterIsInstance<FirebaseFirestoreException>()
-                        .firstOrNull()
-                    if (firestoreError == null && error is CancellationException) throw error
-                    val exceptionToLog = firestoreError ?: (error as? Exception)
-                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
-                        handleFirestoreError(exceptionToLog, OperationType.GET, path)
-                    }
-                    throw error
-                }
         )
+    }.retryWhen { error, attempt ->
+        val recoverable = isRecoverableResumeError(error)
+        val stillSameUser = auth.currentUser?.uid == userId
+        if (recoverable != null && stillSameUser && attempt < MAX_STREAM_RETRIES) {
+            Log.w(
+                SYNC_LOG_TAG,
+                "Transient vault config sync error (code=${recoverable.code}, attempt=${attempt + 1}/$MAX_STREAM_RETRIES, uidHash=${hashUidPrefix(userId)}); refreshing credentials and retrying",
+                recoverable
+            )
+            refreshSessionCredentials(forceRefresh = true)
+            delay((attempt + 1) * RETRY_BASE_DELAY_MS)
+            true
+        } else {
+            false
+        }
+    }.catch { error ->
+        val firestoreError = generateSequence(error) { it.cause }
+            .filterIsInstance<FirebaseFirestoreException>()
+            .firstOrNull()
+        if (firestoreError == null && error is CancellationException) throw error
+        val exceptionToLog = firestoreError ?: (error as? Exception)
+        val path = "users/$userId/vault/config"
+        if (exceptionToLog != null && auth.currentUser?.uid == userId) {
+            Log.e(
+                SYNC_LOG_TAG,
+                "Vault config listener failed after retries [code=${firestoreError?.code ?: error.javaClass.simpleName}, uidHash=${hashUidPrefix(userId)}]: ${error.message}",
+                exceptionToLog
+            )
+            handleFirestoreError(exceptionToLog, OperationType.GET, path)
+        }
+        throw error
     }
 
     suspend fun saveVaultConfig(
@@ -125,7 +206,6 @@ class FirestoreVaultRepository(
 
     fun observeEncryptedCards(userId: String): Flow<List<EncryptedCardDoc>> = flow {
         val uid = requireUserId(userId)
-        val path = "users/$uid/cards"
         emitAll(
             db.collection("users").document(uid).collection("cards")
                 .orderBy("createdAt", Query.Direction.DESCENDING)
@@ -136,18 +216,38 @@ class FirestoreVaultRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     )
                 }
-                .catch { error ->
-                    val firestoreError = generateSequence(error) { it.cause }
-                        .filterIsInstance<FirebaseFirestoreException>()
-                        .firstOrNull()
-                    if (firestoreError == null && error is CancellationException) throw error
-                    val exceptionToLog = firestoreError ?: (error as? Exception)
-                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
-                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
-                    }
-                    throw error
-                }
         )
+    }.retryWhen { error, attempt ->
+        val recoverable = isRecoverableResumeError(error)
+        val stillSameUser = auth.currentUser?.uid == userId
+        if (recoverable != null && stillSameUser && attempt < MAX_STREAM_RETRIES) {
+            Log.w(
+                SYNC_LOG_TAG,
+                "Transient cards sync error (code=${recoverable.code}, attempt=${attempt + 1}/$MAX_STREAM_RETRIES, uidHash=${hashUidPrefix(userId)}); refreshing credentials and retrying",
+                recoverable
+            )
+            refreshSessionCredentials(forceRefresh = true)
+            delay((attempt + 1) * RETRY_BASE_DELAY_MS)
+            true
+        } else {
+            false
+        }
+    }.catch { error ->
+        val firestoreError = generateSequence(error) { it.cause }
+            .filterIsInstance<FirebaseFirestoreException>()
+            .firstOrNull()
+        if (firestoreError == null && error is CancellationException) throw error
+        val exceptionToLog = firestoreError ?: (error as? Exception)
+        val path = "users/$userId/cards"
+        if (exceptionToLog != null && auth.currentUser?.uid == userId) {
+            Log.e(
+                SYNC_LOG_TAG,
+                "Cards listener failed after retries [code=${firestoreError?.code ?: error.javaClass.simpleName}, uidHash=${hashUidPrefix(userId)}]: ${error.message}",
+                exceptionToLog
+            )
+            handleFirestoreError(exceptionToLog, OperationType.LIST, path)
+        }
+        throw error
     }
 
     suspend fun createCard(
@@ -598,5 +698,12 @@ class FirestoreVaultRepository(
             exception = exception,
             emulationCount = if (op == "updateCard") null else 0L
         )
+    }
+
+    companion object {
+        private const val SYNC_LOG_TAG = "VaultSync"
+        private const val MAX_STREAM_RETRIES = 3L
+        private const val RETRY_BASE_DELAY_MS = 750L
+        private const val TOKEN_REFRESH_TIMEOUT_MS = 4000L
     }
 }

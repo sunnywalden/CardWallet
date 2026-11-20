@@ -71,6 +71,19 @@ enum class NfcTechType(val displayName: String) {
     }
 }
 
+val PRESET_CARD_TAGS: List<String> = listOf("高频", "通勤", "家门", "办公", "物业", "备用")
+
+const val MAX_TAGS_PER_CARD = 6
+const val MAX_TAG_LENGTH = 12
+
+fun normalizeCardTags(rawTags: Collection<String>): List<String> =
+    rawTags.asSequence()
+        .map { it.trim().trimStart('#').trim().take(MAX_TAG_LENGTH) }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .take(MAX_TAGS_PER_CARD)
+        .toList()
+
 data class CardSecretsPayload(
     val uidHex: String = "",
     val atqaHex: String = "",
@@ -81,11 +94,15 @@ data class CardSecretsPayload(
     val ndefSummary: String = "",
     val techList: List<String> = emptyList(),
     val notes: String = "",
-    val iconKey: String = ""
+    val iconKey: String = "",
+    val tags: List<String> = emptyList()
 ) {
     fun toJsonString(): String {
         val techArr = JSONArray()
         techList.forEach { techArr.put(it) }
+        val normalizedTags = normalizeCardTags(tags)
+        val tagsArr = JSONArray()
+        normalizedTags.forEach { tagsArr.put(it) }
         return JSONObject().apply {
             put("uidHex", uidHex)
             put("atqaHex", atqaHex)
@@ -98,6 +115,9 @@ data class CardSecretsPayload(
             put("notes", notes)
             if (iconKey.isNotEmpty()) {
                 put("iconKey", iconKey)
+            }
+            if (normalizedTags.isNotEmpty()) {
+                put("tags", tagsArr)
             }
         }.toString()
     }
@@ -113,6 +133,14 @@ data class CardSecretsPayload(
                     }
                 }
             }
+            val tagsJson = obj.optJSONArray("tags")
+            val parsedTags = buildList {
+                if (tagsJson != null) {
+                    for (i in 0 until tagsJson.length()) {
+                        add(tagsJson.optString(i))
+                    }
+                }
+            }
             return CardSecretsPayload(
                 uidHex = obj.optString("uidHex", ""),
                 atqaHex = obj.optString("atqaHex", ""),
@@ -123,7 +151,8 @@ data class CardSecretsPayload(
                 ndefSummary = obj.optString("ndefSummary", ""),
                 techList = techs,
                 notes = obj.optString("notes", ""),
-                iconKey = obj.optString("iconKey", "")
+                iconKey = obj.optString("iconKey", ""),
+                tags = normalizeCardTags(parsedTags)
             )
         }
     }
@@ -182,6 +211,7 @@ data class DecryptedAccessCard(
     val createdAt: Timestamp?,
     val updatedAt: Timestamp?,
     val secrets: CardSecretsPayload,
+    val tags: List<String> = secrets.tags,
     val decryptionFailed: Boolean = false
 )
 
