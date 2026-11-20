@@ -1,0 +1,6 @@
+{
+  "name": "盾匙 NFC",
+  "description": "支持 NFC 门禁卡读取、Android HCE 模拟与 AES-256-GCM 端到端加密云同步的安全门禁卡包应用",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

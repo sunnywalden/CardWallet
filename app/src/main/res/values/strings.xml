@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">盾匙 NFC</string>
+    <string name="hce_service_description">盾匙 NFC 加密门禁卡模拟服务</string>
+    <string name="hce_aid_group_description">已加密的门禁卡与身份卡模拟 AID</string>
+
+    <!-- Auth Screen -->
+    <string name="auth_title">盾匙 NFC 安全卡包</string>
+    <string name="auth_subtitle">端到端 AES-256-GCM 加密 · 多端云同步 · HCE 模拟刷卡</string>
+    <string name="auth_google_sign_in">使用 Google 账号登录</string>
+    <string name="auth_signing_in">正在连接安全认证…</string>
+    <string name="auth_feature_crypto_title">零知识端到端加密</string>
+    <string name="auth_feature_crypto_desc">卡号、UID 与 APDU 载荷均在本地使用 AES-256-GCM 加密后再同步至云端</string>
+    <string name="auth_feature_biometric_title">生物识别 + 备用 PIN 双重守护</string>
+    <string name="auth_feature_biometric_desc">Android Keystore 硬件密钥封装，支持指纹/面容快速解锁与跨设备 PIN 恢复</string>
+    <string name="auth_feature_nfc_title">物理 NFC 读取与 HCE 模拟</string>
+    <string name="auth_feature_nfc_desc">贴近即读 ISO-DEP / NFC-A / MIFARE 信息，支持动态 AID 模拟刷卡</string>
+
+    <!-- Vault Lock / PIN Setup -->
+    <string name="vault_setup_title">初始化加密保险库</string>
+    <string name="vault_setup_subtitle">请设置 6 位保险库主 PIN 码，用于派生密钥并加密同步您的全部门禁凭证。</string>
+    <string name="vault_setup_confirm_title">再次输入以确认 PIN 码</string>
+    <string name="vault_setup_confirm_subtitle">请牢记此 PIN 码，更换设备登录 Google 账号后需凭此 PIN 恢复解密。</string>
+    <string name="vault_unlock_title">保险库已锁定</string>
+    <string name="vault_unlock_subtitle">验证指纹/面容或输入 6 位备用 PIN 码以解密门禁卡包</string>
+    <string name="vault_use_biometric">使用指纹或面容解锁</string>
+    <string name="vault_pin_mismatch">两次输入的 PIN 码不一致，请重新设置</string>
+    <string name="vault_pin_incorrect">PIN 码验证失败，请重试</string>
+    <string name="vault_pin_lockout">错误次数过多，请在 %1$d 秒后重试</string>
+    <string name="vault_biometric_title">验证身份以解锁盾匙卡包</string>
+    <string name="vault_biometric_subtitle">使用设备生物识别解封硬件密钥</string>
+    <string name="vault_biometric_negative">使用备用 PIN 码</string>
+
+    <!-- Navigation & Home -->
+    <string name="nav_wallet">卡包</string>
+    <string name="nav_scan">扫描添加</string>
+    <string name="nav_debug">NFC 调试</string>
+    <string name="nav_security">安全中心</string>
+    <string name="wallet_header_title">加密门禁卡包</string>
+    <string name="wallet_active_hce_ready">HCE 模拟已就绪 · 贴近读卡器即可刷卡</string>
+    <string name="wallet_active_hce_none">尚未激活模拟卡片 · 在下方选择一张卡片开启模拟</string>
+    <string name="wallet_empty_title">保险库暂无门禁卡</string>
+    <string name="wallet_empty_desc">点击下方「扫描添加」将实体 NFC 门禁卡贴近手机背部，或手动录入支持 HCE 协议的门禁凭证。</string>
+    <string name="wallet_add_card">扫描 / 添加门禁卡</string>
+    <string name="wallet_fab_add_desc">点击扫描添加物理 NFC 门禁卡</string>
+    <string name="wallet_filter_all">全部</string>
+    <string name="wallet_filter_hce">HCE 模拟</string>
+    <string name="wallet_filter_physical">物理读取</string>
+    <string name="wallet_toggle_search">搜索门禁卡</string>
+    <string name="wallet_lock_now">立即锁定</string>
+
+    <!-- NFC Scan & Add -->
+    <string name="scan_title">添加 NFC 门禁卡</string>
+    <string name="scan_mode_hardware">NFC 贴卡读取</string>
+    <string name="scan_mode_manual">手动录入 HCE 卡</string>
+    <string name="scan_waiting_hint">请将门禁卡紧贴手机背部 NFC 感应区</string>
+    <string name="scan_nfc_disabled">系统 NFC 未开启，请先前往设置开启 NFC 功能</string>
+    <string name="scan_open_nfc_settings">打开系统 NFC 设置</string>
+    <string name="scan_nfc_unavailable">当前设备未检测到 NFC 硬件，您仍可使用「手动录入 HCE 卡」管理并云端加密同步凭证。</string>
+    <string name="scan_success_badge">已捕获物理 NFC 标签</string>
+    <string name="scan_save_encrypted">AES-256 加密并保存至卡包</string>
+
+    <!-- NFC Debug Console -->
+    <string name="debug_title">NFC 调试台</string>
+    <string name="debug_subtitle">检测设备 NFC 与 HCE 状态，实时打印标签技术栈与底层参数</string>
+    <string name="debug_empty_logs">尚未捕获到物理标签。开启读卡监听后，将门禁卡或交通卡贴近手机背部即可在此打印完整技术栈（如 IsoDep、NfcA、NfcF 等）。</string>
+    <string name="debug_copy_report">复制调试报告</string>
+    <string name="debug_clear_logs">清空日志</string>
+    <string name="debug_open_app_permissions">前往应用权限设置</string>
+    <string name="debug_permission_card_title">NFC 权限与系统开关实时监测</string>
+
+    <!-- Security Settings -->
+    <string name="security_title">保险库安全中心</string>
+    <string name="security_auto_lock_title">自动锁屏</string>
+    <string name="security_auto_lock_desc_on">切换至后台后立即锁定，返回应用时自动触发重新生物识别验证</string>
+    <string name="security_auto_lock_desc_off">开启后切换至后台将立即清空内存密钥并要求重新验证身份</string>
+    <string name="security_sign_out">退出登录并清除本地密钥</string>
+
+    <!-- Quick Settings Tile -->
+    <string name="qs_tile_nfc_label">NFC 模拟刷卡</string>
+    <string name="qs_tile_add_button">添加「NFC 模拟刷卡」磁贴到下拉面板</string>
+</resources>

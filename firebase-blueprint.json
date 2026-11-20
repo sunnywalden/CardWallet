@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "VaultConfig": {
+      "title": "VaultConfig",
+      "description": "Per-user encrypted key-wrapping configuration for cross-device PIN unlock and AES-256-GCM DEK recovery.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID owning this vault."
+        },
+        "wrappedDekBase64": {
+          "type": "string",
+          "description": "256-bit DEK encrypted with PBKDF2-derived KEK using AES-256-GCM."
+        },
+        "wrappedDekIvBase64": {
+          "type": "string",
+          "description": "12-byte AES-GCM IV used to wrap the DEK."
+        },
+        "kdfSaltBase64": {
+          "type": "string",
+          "description": "16-byte random salt for PBKDF2-HMAC-SHA256."
+        },
+        "kdfIterations": {
+          "type": "integer",
+          "description": "PBKDF2 iteration count."
+        },
+        "pinVerifierBase64": {
+          "type": "string",
+          "description": "SHA-256 verifier derived from KEK to validate PIN checks."
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "description": "Encryption schema version."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "wrappedDekBase64",
+        "wrappedDekIvBase64",
+        "kdfSaltBase64",
+        "kdfIterations",
+        "pinVerifierBase64",
+        "schemaVersion",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EncryptedAccessCard": {
+      "title": "EncryptedAccessCard",
+      "description": "User access card with non-sensitive display metadata and AES-256-GCM encrypted NFC/HCE payload.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID owning this card."
+        },
+        "label": {
+          "type": "string",
+          "description": "User-facing card alias (1-40 chars)."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["RESIDENCE", "OFFICE", "CAMPUS", "PARKING", "TRANSIT", "OTHER"],
+          "description": "Access card location category."
+        },
+        "accentColor": {
+          "type": "string",
+          "enum": ["CYAN", "EMERALD", "INDIGO", "AMBER", "ROSE"],
+          "description": "Card visual accent token."
+        },
+        "primaryTech": {
+          "type": "string",
+          "enum": ["ISO_DEP", "NFC_A", "NFC_B", "NFC_F", "NFC_V", "MIFARE_CLASSIC", "MIFARE_ULTRALIGHT", "NDEF", "OTHER"],
+          "description": "Primary detected or configured NFC protocol."
+        },
+        "maskedUid": {
+          "type": "string",
+          "description": "Masked non-sensitive display suffix such as '•••• 8F2A'."
+        },
+        "hceSupported": {
+          "type": "boolean",
+          "description": "Whether this card is configured for Android HCE emulation."
+        },
+        "activeHce": {
+          "type": "boolean",
+          "description": "Whether this card is currently selected as the active HCE card."
+        },
+        "encryptedPayloadBase64": {
+          "type": "string",
+          "description": "AES-256-GCM ciphertext of full NFC UID, AID, APDU response, NDEF records, and notes."
+        },
+        "payloadIvBase64": {
+          "type": "string",
+          "description": "12-byte AES-GCM IV for encryptedPayloadBase64."
+        },
+        "emulationCount": {
+          "type": "integer",
+          "description": "Number of recorded HCE emulation taps."
+        },
+        "lastEmulatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional timestamp of last recorded HCE tap."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "label",
+        "category",
+        "accentColor",
+        "primaryTech",
+        "maskedUid",
+        "hceSupported",
+        "activeHce",
+        "encryptedPayloadBase64",
+        "payloadIvBase64",
+        "emulationCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/vault/{configId}": {
+      "schema": { "$ref": "#/entities/VaultConfig" },
+      "description": "Stores the user's PBKDF2-wrapped DEK configuration at document ID 'config'."
+    },
+    "/users/{userId}/cards/{cardId}": {
+      "schema": { "$ref": "#/entities/EncryptedAccessCard" },
+      "description": "Stores the user's end-to-end encrypted NFC access cards."
+    }
+  }
+}

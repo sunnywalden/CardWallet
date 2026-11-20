@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidVaultConfig(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.wrappedDekBase64 is string && data.wrappedDekBase64.size() >= 16 && data.wrappedDekBase64.size() <= 512 &&
+             data.wrappedDekIvBase64 is string && data.wrappedDekIvBase64.size() >= 8 && data.wrappedDekIvBase64.size() <= 128 &&
+             data.kdfSaltBase64 is string && data.kdfSaltBase64.size() >= 8 && data.kdfSaltBase64.size() <= 128 &&
+             data.kdfIterations is int && data.kdfIterations >= 10000 && data.kdfIterations <= 1000000 &&
+             data.pinVerifierBase64 is string && data.pinVerifierBase64.size() >= 16 && data.pinVerifierBase64.size() <= 256 &&
+             data.schemaVersion is int && data.schemaVersion >= 1 && data.schemaVersion <= 10 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCategory(category) {
+      return category in ['RESIDENCE', 'OFFICE', 'CAMPUS', 'PARKING', 'TRANSIT', 'OTHER'];
+    }
+
+    function isValidAccentColor(color) {
+      return color in ['CYAN', 'EMERALD', 'INDIGO', 'AMBER', 'ROSE'];
+    }
+
+    function isValidPrimaryTech(tech) {
+      return tech in ['ISO_DEP', 'NFC_A', 'NFC_B', 'NFC_F', 'NFC_V', 'MIFARE_CLASSIC', 'MIFARE_ULTRALIGHT', 'NDEF', 'OTHER'];
+    }
+
+    function isValidAccessCard(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.label is string && data.label.size() >= 1 && data.label.size() <= 40 &&
+             data.category is string && isValidCategory(data.category) &&
+             data.accentColor is string && isValidAccentColor(data.accentColor) &&
+             data.primaryTech is string && isValidPrimaryTech(data.primaryTech) &&
+             data.maskedUid is string && data.maskedUid.size() <= 24 &&
+             data.hceSupported is bool &&
+             data.activeHce is bool &&
+             data.encryptedPayloadBase64 is string && data.encryptedPayloadBase64.size() >= 16 && data.encryptedPayloadBase64.size() <= 8192 &&
+             data.payloadIvBase64 is string && data.payloadIvBase64.size() >= 8 && data.payloadIvBase64.size() <= 64 &&
+             data.emulationCount is int && data.emulationCount >= 0 && data.emulationCount <= 1000000 &&
+             (!('lastEmulatedAt' in data) || (data.lastEmulatedAt is timestamp && data.lastEmulatedAt <= request.time)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId}/vault/{configId} {
+      allow get: if isOwner(userId) && configId == 'config';
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       configId == 'config' &&
+                       incoming().keys().hasAll(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'pinVerifierBase64', 'schemaVersion', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'pinVerifierBase64', 'schemaVersion', 'createdAt', 'updatedAt']) &&
+                       isValidVaultConfig(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       configId == 'config' &&
+                       isValidVaultConfig(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'pinVerifierBase64', 'schemaVersion', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && configId == 'config';
+    }
+
+    match /users/{userId}/cards/{cardId} {
+      allow get: if isOwner(userId) && isValidId(cardId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(cardId) &&
+                       incoming().keys().hasAll(['userId', 'label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'emulationCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'emulationCount', 'lastEmulatedAt', 'createdAt', 'updatedAt']) &&
+                       isValidAccessCard(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(cardId) &&
+                       isValidAccessCard(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt && (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['label', 'category', 'accentColor', 'primaryTech', 'maskedUid', 'hceSupported', 'activeHce', 'encryptedPayloadBase64', 'payloadIvBase64', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['activeHce', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['emulationCount', 'lastEmulatedAt', 'updatedAt'])
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(cardId);
+    }
+  }
+}
