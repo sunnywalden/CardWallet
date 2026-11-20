@@ -67,7 +67,19 @@ curl -X PATCH \
 - CI 双 job(Android / rules)全绿,PR #1、#2 已合并 main
 - release APK 正式签名 + Firebase 完整配置 + App Check 接入
 
-## 6. 剩余可选增强(需产品决策)
+## 6. AI Studio 同步防回退
+
+AI Studio 重新生成代码会覆盖本地修复(已发生两次)。每次从 AI Studio 导出/同步后,先运行:
+
+```bash
+./scripts/check-delivery.sh          # 21 项静态检查(秒级)
+./scripts/check-delivery.sh --build  # 追加单元测试
+```
+
+检查覆盖:google-services.json、动态资源查找、App Check 接入、包名、可执行位、
+加密核心(KDF/verifier v2/版本化)、规则关键条款、CI/文档。失败时输出对应修复指引。
+
+## 7. 剩余可选增强(需产品决策)
 
 - KEK 设备密钥绑定:消除云端文档离线 PIN 爆破,代价是失去纯 PIN 跨设备恢复(见威胁模型 §T1)。
 - v1 数据淘汰:两个版本周期后移除 v1 读取路径(先确认迁移率 100%)。
