@@ -658,59 +658,94 @@ class VaultViewModel(
     ) {
         val dek = _dekState.value
         if (dek == null) {
+            Log.e(
+                TAG,
+                "saveNewCard aborted: vault DEK is null (locked), category=${category.name}, tech=${primaryTech.name}, hceSupported=$hceSupported, activateHceNow=$activateHceNow"
+            )
             onResult(Result.failure(IllegalStateException("保险库未解锁")))
             return
         }
         validateSecrets(secrets)?.let { message ->
+            Log.e(
+                TAG,
+                "saveNewCard aborted by validateSecrets: reason=$message, notesLen=${secrets.notes.length}, techCount=${secrets.techList.size}"
+            )
             onResult(Result.failure(IllegalArgumentException(message)))
             return
         }
         viewModelScope.launch {
-            val enc = withContext(Dispatchers.Default) {
-                VaultCryptoEngine.encryptCardSecrets(dek, secrets, ownerUserId = currentUserId)
-            }
-            validateEncryptedSize(enc.encryptedPayloadBase64)?.let { message ->
-                onResult(Result.failure(IllegalArgumentException(message)))
-                return@launch
-            }
-            val masked = NfcTagParser.buildMaskedUidFromHexString(secrets.uidHex)
-            val existingActiveIds = (cardsState.value as? UiState.Success)?.data
-                ?.filter { it.activeHce }
-                ?.map { it.id }
-                .orEmpty()
-
-            val shouldActivate = hceSupported && activateHceNow
-            val createRes = if (shouldActivate) {
-                repository.createCardAndActivate(
-                    userId = currentUserId,
-                    label = label,
-                    category = category,
-                    accentColor = accentColor,
-                    primaryTech = primaryTech,
-                    maskedUid = masked,
-                    hceSupported = true,
-                    encryptedPayloadBase64 = enc.encryptedPayloadBase64,
-                    payloadIvBase64 = enc.payloadIvBase64,
-                    deactivateCardIds = existingActiveIds
-                ).onSuccess {
-                    localStore.setQuickHceEnabled(true)
-                    onSyncAid(secrets.aidHex)
+            try {
+                val enc = withContext(Dispatchers.Default) {
+                    VaultCryptoEngine.encryptCardSecrets(dek, secrets, ownerUserId = currentUserId)
                 }
-            } else {
-                repository.createCard(
-                    userId = currentUserId,
-                    label = label,
-                    category = category,
-                    accentColor = accentColor,
-                    primaryTech = primaryTech,
-                    maskedUid = masked,
-                    hceSupported = hceSupported,
-                    activeHce = false,
-                    encryptedPayloadBase64 = enc.encryptedPayloadBase64,
-                    payloadIvBase64 = enc.payloadIvBase64
+                validateEncryptedSize(enc.encryptedPayloadBase64)?.let { message ->
+                    Log.e(
+                        TAG,
+                        "saveNewCard aborted by validateEncryptedSize: cipherLen=${enc.encryptedPayloadBase64.length}, ivLen=${enc.payloadIvBase64.length}"
+                    )
+                    onResult(Result.failure(IllegalArgumentException(message)))
+                    return@launch
+                }
+                val masked = NfcTagParser.buildMaskedUidFromHexString(secrets.uidHex)
+                val existingActiveIds = (cardsState.value as? UiState.Success)?.data
+                    ?.filter { it.activeHce }
+                    ?.map { it.id }
+                    .orEmpty()
+
+                val shouldActivate = hceSupported && activateHceNow
+                val createRes = if (shouldActivate) {
+                    repository.createCardAndActivate(
+                        userId = currentUserId,
+                        label = label,
+                        category = category,
+                        accentColor = accentColor,
+                        primaryTech = primaryTech,
+                        maskedUid = masked,
+                        hceSupported = true,
+                        encryptedPayloadBase64 = enc.encryptedPayloadBase64,
+                        payloadIvBase64 = enc.payloadIvBase64,
+                        deactivateCardIds = existingActiveIds
+                    ).onSuccess {
+                        localStore.setQuickHceEnabled(true)
+                        onSyncAid(secrets.aidHex)
+                    }
+                } else {
+                    repository.createCard(
+                        userId = currentUserId,
+                        label = label,
+                        category = category,
+                        accentColor = accentColor,
+                        primaryTech = primaryTech,
+                        maskedUid = masked,
+                        hceSupported = hceSupported,
+                        activeHce = false,
+                        encryptedPayloadBase64 = enc.encryptedPayloadBase64,
+                        payloadIvBase64 = enc.payloadIvBase64
+                    )
+                }
+                createRes.onFailure { err ->
+                    Log.e(
+                        TAG,
+                        "saveNewCard repository write failed: shouldActivate=$shouldActivate, " +
+                            "existingActiveCount=${existingActiveIds.size}, labelLen=${label.trim().length}, " +
+                            "category=${category.name}, accent=${accentColor.name}, tech=${primaryTech.name}, " +
+                            "maskedUidLen=${masked.length}, cipherLen=${enc.encryptedPayloadBase64.length}, " +
+                            "ivLen=${enc.payloadIvBase64.length}, err=${err.javaClass.simpleName}: ${err.message}",
+                        err
+                    )
+                }
+                onResult(createRes)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(
+                    TAG,
+                    "saveNewCard unexpected exception during encrypt/save: category=${category.name}, " +
+                        "tech=${primaryTech.name}, hceSupported=$hceSupported, activateHceNow=$activateHceNow",
+                    e
                 )
+                onResult(Result.failure(e))
             }
-            onResult(createRes)
         }
     }
 
@@ -726,41 +761,64 @@ class VaultViewModel(
     ) {
         val dek = _dekState.value
         if (dek == null) {
+            Log.e(TAG, "updateCard aborted: vault DEK is null (locked), cardId=${existing.id}")
             onResult(Result.failure(IllegalStateException("保险库未解锁")))
             return
         }
         validateSecrets(secrets)?.let { message ->
+            Log.e(TAG, "updateCard aborted by validateSecrets: cardId=${existing.id}, reason=$message")
             onResult(Result.failure(IllegalArgumentException(message)))
             return
         }
         viewModelScope.launch {
-            val enc = withContext(Dispatchers.Default) {
-                VaultCryptoEngine.encryptCardSecrets(dek, secrets, ownerUserId = currentUserId)
+            try {
+                val enc = withContext(Dispatchers.Default) {
+                    VaultCryptoEngine.encryptCardSecrets(dek, secrets, ownerUserId = currentUserId)
+                }
+                validateEncryptedSize(enc.encryptedPayloadBase64)?.let { message ->
+                    Log.e(
+                        TAG,
+                        "updateCard aborted by validateEncryptedSize: cardId=${existing.id}, cipherLen=${enc.encryptedPayloadBase64.length}"
+                    )
+                    onResult(Result.failure(IllegalArgumentException(message)))
+                    return@launch
+                }
+                val masked = NfcTagParser.buildMaskedUidFromHexString(secrets.uidHex)
+                val keepActive = existing.activeHce && hceSupported
+                val res = repository.updateCard(
+                    userId = currentUserId,
+                    cardId = existing.id,
+                    label = label,
+                    category = category,
+                    accentColor = accentColor,
+                    primaryTech = existing.primaryTech,
+                    maskedUid = masked,
+                    hceSupported = hceSupported,
+                    activeHce = keepActive,
+                    encryptedPayloadBase64 = enc.encryptedPayloadBase64,
+                    payloadIvBase64 = enc.payloadIvBase64,
+                    cryptoVersion = 2
+                )
+                res.onFailure { err ->
+                    Log.e(
+                        TAG,
+                        "updateCard repository write failed: cardId=${existing.id}, keepActive=$keepActive, " +
+                            "labelLen=${label.trim().length}, category=${category.name}, " +
+                            "cipherLen=${enc.encryptedPayloadBase64.length}, ivLen=${enc.payloadIvBase64.length}, " +
+                            "err=${err.javaClass.simpleName}: ${err.message}",
+                        err
+                    )
+                }
+                if (res.isSuccess && keepActive) {
+                    onSyncAid(secrets.aidHex)
+                }
+                onResult(res)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "updateCard unexpected exception: cardId=${existing.id}", e)
+                onResult(Result.failure(e))
             }
-            validateEncryptedSize(enc.encryptedPayloadBase64)?.let { message ->
-                onResult(Result.failure(IllegalArgumentException(message)))
-                return@launch
-            }
-            val masked = NfcTagParser.buildMaskedUidFromHexString(secrets.uidHex)
-            val keepActive = existing.activeHce && hceSupported
-            val res = repository.updateCard(
-                userId = currentUserId,
-                cardId = existing.id,
-                label = label,
-                category = category,
-                accentColor = accentColor,
-                primaryTech = existing.primaryTech,
-                maskedUid = masked,
-                hceSupported = hceSupported,
-                activeHce = keepActive,
-                encryptedPayloadBase64 = enc.encryptedPayloadBase64,
-                payloadIvBase64 = enc.payloadIvBase64,
-                cryptoVersion = 2
-            )
-            if (res.isSuccess && keepActive) {
-                onSyncAid(secrets.aidHex)
-            }
-            onResult(res)
         }
     }
 

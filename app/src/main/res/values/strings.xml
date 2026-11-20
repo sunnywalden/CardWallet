@@ -48,6 +48,13 @@
     <string name="wallet_filter_physical">物理读取</string>
     <string name="wallet_toggle_search">搜索门禁卡</string>
     <string name="wallet_lock_now">立即锁定</string>
+    <string name="wallet_swipe_delete_action">删除</string>
+    <string name="wallet_swipe_delete_cd">删除门禁卡</string>
+    <string name="wallet_delete_dialog_title">确认删除门禁卡？</string>
+    <string name="wallet_delete_dialog_message">将从本地缓存及云端保险库永久移除「%1$s」的加密凭证，此操作不可撤销。</string>
+    <string name="wallet_delete_dialog_active_hce_note">该卡片当前正处于 HCE 模拟状态，删除后将自动停止模拟。</string>
+    <string name="wallet_delete_dialog_confirm">确认删除</string>
+    <string name="wallet_delete_dialog_cancel">取消</string>
 
     <!-- NFC Scan & Add -->
     <string name="scan_title">添加门禁卡</string>

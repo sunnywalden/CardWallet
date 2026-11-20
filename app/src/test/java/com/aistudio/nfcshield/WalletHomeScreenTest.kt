@@ -7,6 +7,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import com.aistudio.nfcshield.data.model.CardAccentColor
 import com.aistudio.nfcshield.data.model.CardCategory
 import com.aistudio.nfcshield.data.model.CardSecretsPayload
@@ -17,6 +19,7 @@ import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.ui.screens.WalletHomeScreen
 import com.aistudio.nfcshield.ui.theme.ObsidianTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -132,5 +135,59 @@ class WalletHomeScreenTest {
         composeRule.onNodeWithTag("wallet_lazy_column")
             .performScrollToNode(hasTestTag("access_card_card-6"))
         composeRule.onNodeWithTag("access_card_card-6").assertIsDisplayed()
+    }
+
+    @Test
+    fun `left swipe on list card opens delete confirmation dialog and respects cancel and confirm`() {
+        val activeHero = sampleCard(id = "hero-1", label = "总部工牌", activeHce = true)
+        val swipeTarget = sampleCard(id = "list-2", label = "东门小区", activeHce = false)
+        var deletedCardId: String? = null
+
+        composeRule.setContent {
+            ObsidianTheme {
+                WalletHomeScreen(
+                    cardsState = UiState.Success(listOf(activeHero, swipeTarget)),
+                    nfcStatus = readyNfcStatus,
+                    recentTapEvents = emptyList(),
+                    onCardClick = {},
+                    onToggleHce = {},
+                    onDeleteCard = { deletedCardId = it.id },
+                    onNavigateToScan = {},
+                    onOpenNfcSettings = {},
+                    onLockVaultNow = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Swipe left on the secondary list row -> dialog opens, card is not deleted yet
+        composeRule.onNodeWithTag("swipe_delete_container_list-2").performTouchInput {
+            swipeLeft()
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("delete_card_confirm_dialog").assertIsDisplayed()
+        assertNull(deletedCardId)
+
+        // Cancel dismisses dialog and preserves the card without calling onDeleteCard
+        composeRule.onNodeWithTag("cancel_delete_card_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("delete_card_confirm_dialog").assertDoesNotExist()
+        composeRule.onNodeWithTag("access_card_list-2").assertIsDisplayed()
+        assertNull(deletedCardId)
+
+        // Swipe left again and confirm -> triggers onDeleteCard with target card ID
+        composeRule.onNodeWithTag("swipe_delete_container_list-2").performTouchInput {
+            swipeLeft()
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("delete_card_confirm_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("confirm_delete_card_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("delete_card_confirm_dialog").assertDoesNotExist()
+        assertEquals("list-2", deletedCardId)
     }
 }

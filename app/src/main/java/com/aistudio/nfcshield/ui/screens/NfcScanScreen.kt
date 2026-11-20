@@ -1,5 +1,6 @@
 package com.aistudio.nfcshield.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -605,7 +606,17 @@ fun NfcScanScreen(
                                 if (result.isSuccess) {
                                     onNavigateBackToWallet()
                                 } else {
-                                    formError = result.exceptionOrNull()?.localizedMessage ?: "保存失败，请重试"
+                                    val err = result.exceptionOrNull()
+                                    Log.e(
+                                        "NfcCardSave",
+                                        "NfcScanScreen save callback failed: isManualMode=$isManualMode, " +
+                                            "hasScannedTag=${tagSnapshot != null}, category=${category.name}, " +
+                                            "accent=${accentColor.name}, tech=${effectivePrimaryTech.name}, " +
+                                            "hceSupported=$effectiveHceSupported, activateHceNow=$activateHceNow, " +
+                                            "labelLen=${cleanLabel.length}, err=${err?.javaClass?.simpleName}: ${err?.message}",
+                                        err
+                                    )
+                                    formError = err?.localizedMessage ?: "保存失败，请重试"
                                 }
                             }
                         },

@@ -1,6 +1,7 @@
 package com.aistudio.nfcshield.data.remote
 
 import android.content.Context
+import android.util.Log
 import com.aistudio.nfcshield.R
 import com.aistudio.nfcshield.crypto.WrappedDekPayload
 import com.aistudio.nfcshield.data.model.CardAccentColor
@@ -159,10 +160,48 @@ class FirestoreVaultRepository(
         cryptoVersion: Int = 2
     ): Result<String> {
         val cleanLabel = label.trim().take(40)
+        val safeMaskedUid = maskedUid.take(24)
         val path = "users/$userId/cards"
         return try {
             val uid = requireUserId(userId)
-            require(cleanLabel.isNotEmpty()) { "卡片名称不能为空" }
+            val violations = validateCardWriteFields(
+                userId = uid,
+                label = cleanLabel,
+                category = category,
+                accentColor = accentColor,
+                primaryTech = primaryTech,
+                maskedUid = safeMaskedUid,
+                encryptedPayloadBase64 = encryptedPayloadBase64,
+                payloadIvBase64 = payloadIvBase64,
+                cryptoVersion = cryptoVersion,
+                isCreate = true
+            )
+            if (violations.isNotEmpty()) {
+                val msg = "卡片字段校验失败：${violations.joinToString("；")}"
+                Log.e(
+                    CARD_SAVE_LOG_TAG,
+                    "createCard pre-flight validation failed: violations=$violations, " +
+                        buildRedactedCardDiagnostic(
+                            op = "createCard",
+                            expectedUserId = userId,
+                            authUid = uid,
+                            cardId = "(pending)",
+                            labelLen = cleanLabel.length,
+                            category = category,
+                            accentColor = accentColor,
+                            primaryTech = primaryTech,
+                            maskedUidLen = safeMaskedUid.length,
+                            hceSupported = hceSupported,
+                            activeHce = activeHce,
+                            encryptedPayloadLen = encryptedPayloadBase64.length,
+                            payloadIvLen = payloadIvBase64.length,
+                            cryptoVersion = cryptoVersion,
+                            deactivateCount = 0
+                        )
+                )
+                return Result.failure(IllegalArgumentException(msg))
+            }
+
             val docRef = db.collection("users").document(uid).collection("cards").document()
             val payload = mapOf(
                 "userId" to uid,
@@ -170,7 +209,7 @@ class FirestoreVaultRepository(
                 "category" to category.name,
                 "accentColor" to accentColor.name,
                 "primaryTech" to primaryTech.name,
-                "maskedUid" to maskedUid.take(24),
+                "maskedUid" to safeMaskedUid,
                 "hceSupported" to hceSupported,
                 "activeHce" to activeHce,
                 "encryptedPayloadBase64" to encryptedPayloadBase64,
@@ -185,6 +224,24 @@ class FirestoreVaultRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            logCardSaveFailure(
+                op = "createCard",
+                path = path,
+                expectedUserId = userId,
+                cardId = "(auto)",
+                labelLen = cleanLabel.length,
+                category = category,
+                accentColor = accentColor,
+                primaryTech = primaryTech,
+                maskedUidLen = safeMaskedUid.length,
+                hceSupported = hceSupported,
+                activeHce = activeHce,
+                encryptedPayloadLen = encryptedPayloadBase64.length,
+                payloadIvLen = payloadIvBase64.length,
+                cryptoVersion = cryptoVersion,
+                deactivateCount = 0,
+                exception = e
+            )
             handleFirestoreError(e, OperationType.CREATE, path)
             Result.failure(e)
         }
@@ -209,10 +266,59 @@ class FirestoreVaultRepository(
         cryptoVersion: Int = 2
     ): Result<String> {
         val cleanLabel = label.trim().take(40)
+        val safeMaskedUid = maskedUid.take(24)
+        val validDeactivateIds = deactivateCardIds
+            .map { it.trim() }
+            .filter { VALID_DOC_ID_REGEX.matches(it) }
+            .distinct()
         val path = "users/$userId/cards"
         return try {
             val uid = requireUserId(userId)
-            require(cleanLabel.isNotEmpty()) { "卡片名称不能为空" }
+            val violations = validateCardWriteFields(
+                userId = uid,
+                label = cleanLabel,
+                category = category,
+                accentColor = accentColor,
+                primaryTech = primaryTech,
+                maskedUid = safeMaskedUid,
+                encryptedPayloadBase64 = encryptedPayloadBase64,
+                payloadIvBase64 = payloadIvBase64,
+                cryptoVersion = cryptoVersion,
+                isCreate = true
+            )
+            if (violations.isNotEmpty()) {
+                val msg = "卡片字段校验失败：${violations.joinToString("；")}"
+                Log.e(
+                    CARD_SAVE_LOG_TAG,
+                    "createCardAndActivate pre-flight validation failed: violations=$violations, " +
+                        buildRedactedCardDiagnostic(
+                            op = "createCardAndActivate",
+                            expectedUserId = userId,
+                            authUid = uid,
+                            cardId = "(pending)",
+                            labelLen = cleanLabel.length,
+                            category = category,
+                            accentColor = accentColor,
+                            primaryTech = primaryTech,
+                            maskedUidLen = safeMaskedUid.length,
+                            hceSupported = hceSupported,
+                            activeHce = true,
+                            encryptedPayloadLen = encryptedPayloadBase64.length,
+                            payloadIvLen = payloadIvBase64.length,
+                            cryptoVersion = cryptoVersion,
+                            deactivateCount = validDeactivateIds.size
+                        )
+                )
+                return Result.failure(IllegalArgumentException(msg))
+            }
+
+            if (validDeactivateIds.size != deactivateCardIds.size) {
+                Log.e(
+                    CARD_SAVE_LOG_TAG,
+                    "createCardAndActivate filtered invalid deactivateCardIds: rawCount=${deactivateCardIds.size}, validCount=${validDeactivateIds.size}"
+                )
+            }
+
             val cardsRef = db.collection("users").document(uid).collection("cards")
             val docRef = cardsRef.document()
             val batch = db.batch()
@@ -224,7 +330,7 @@ class FirestoreVaultRepository(
                     "category" to category.name,
                     "accentColor" to accentColor.name,
                     "primaryTech" to primaryTech.name,
-                    "maskedUid" to maskedUid.take(24),
+                    "maskedUid" to safeMaskedUid,
                     "hceSupported" to hceSupported,
                     "activeHce" to true,
                     "encryptedPayloadBase64" to encryptedPayloadBase64,
@@ -235,7 +341,7 @@ class FirestoreVaultRepository(
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             )
-            deactivateCardIds.filter { it != docRef.id }.forEach { oldId ->
+            validDeactivateIds.filter { it != docRef.id }.forEach { oldId ->
                 batch.update(
                     cardsRef.document(oldId),
                     mapOf("activeHce" to false, "updatedAt" to FieldValue.serverTimestamp())
@@ -246,6 +352,24 @@ class FirestoreVaultRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            logCardSaveFailure(
+                op = "createCardAndActivate",
+                path = path,
+                expectedUserId = userId,
+                cardId = "(auto-batch)",
+                labelLen = cleanLabel.length,
+                category = category,
+                accentColor = accentColor,
+                primaryTech = primaryTech,
+                maskedUidLen = safeMaskedUid.length,
+                hceSupported = hceSupported,
+                activeHce = true,
+                encryptedPayloadLen = encryptedPayloadBase64.length,
+                payloadIvLen = payloadIvBase64.length,
+                cryptoVersion = cryptoVersion,
+                deactivateCount = validDeactivateIds.size,
+                exception = e
+            )
             handleFirestoreError(e, OperationType.CREATE, path)
             Result.failure(e)
         }
@@ -266,11 +390,49 @@ class FirestoreVaultRepository(
         cryptoVersion: Int = 2
     ): Result<Unit> {
         val cleanLabel = label.trim().take(40)
+        val safeMaskedUid = maskedUid.take(24)
         val path = "users/$userId/cards/$cardId"
         return try {
             val uid = requireUserId(userId)
-            require(cardId.isNotBlank()) { "卡片 ID 无效" }
-            require(cleanLabel.isNotEmpty()) { "卡片名称不能为空" }
+            require(VALID_DOC_ID_REGEX.matches(cardId)) { "卡片 ID 无效" }
+            val violations = validateCardWriteFields(
+                userId = uid,
+                label = cleanLabel,
+                category = category,
+                accentColor = accentColor,
+                primaryTech = primaryTech,
+                maskedUid = safeMaskedUid,
+                encryptedPayloadBase64 = encryptedPayloadBase64,
+                payloadIvBase64 = payloadIvBase64,
+                cryptoVersion = cryptoVersion,
+                isCreate = false
+            )
+            if (violations.isNotEmpty()) {
+                val msg = "卡片字段校验失败：${violations.joinToString("；")}"
+                Log.e(
+                    CARD_SAVE_LOG_TAG,
+                    "updateCard pre-flight validation failed: violations=$violations, " +
+                        buildRedactedCardDiagnostic(
+                            op = "updateCard",
+                            expectedUserId = userId,
+                            authUid = uid,
+                            cardId = cardId,
+                            labelLen = cleanLabel.length,
+                            category = category,
+                            accentColor = accentColor,
+                            primaryTech = primaryTech,
+                            maskedUidLen = safeMaskedUid.length,
+                            hceSupported = hceSupported,
+                            activeHce = activeHce,
+                            encryptedPayloadLen = encryptedPayloadBase64.length,
+                            payloadIvLen = payloadIvBase64.length,
+                            cryptoVersion = cryptoVersion,
+                            deactivateCount = 0
+                        )
+                )
+                return Result.failure(IllegalArgumentException(msg))
+            }
+
             db.collection("users").document(uid).collection("cards").document(cardId)
                 .update(
                     mapOf(
@@ -278,7 +440,7 @@ class FirestoreVaultRepository(
                         "category" to category.name,
                         "accentColor" to accentColor.name,
                         "primaryTech" to primaryTech.name,
-                        "maskedUid" to maskedUid.take(24),
+                        "maskedUid" to safeMaskedUid,
                         "hceSupported" to hceSupported,
                         "activeHce" to activeHce,
                         "encryptedPayloadBase64" to encryptedPayloadBase64,
@@ -291,6 +453,24 @@ class FirestoreVaultRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            logCardSaveFailure(
+                op = "updateCard",
+                path = path,
+                expectedUserId = userId,
+                cardId = cardId,
+                labelLen = cleanLabel.length,
+                category = category,
+                accentColor = accentColor,
+                primaryTech = primaryTech,
+                maskedUidLen = safeMaskedUid.length,
+                hceSupported = hceSupported,
+                activeHce = activeHce,
+                encryptedPayloadLen = encryptedPayloadBase64.length,
+                payloadIvLen = payloadIvBase64.length,
+                cryptoVersion = cryptoVersion,
+                deactivateCount = 0,
+                exception = e
+            )
             handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
         }
@@ -323,6 +503,13 @@ class FirestoreVaultRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Log.e(
+                CARD_SAVE_LOG_TAG,
+                "setActiveHceCard failed [path=$path]: targetCardId=${targetCardId ?: "null"}, " +
+                    "deactivateCount=${currentlyActiveIds.size}, signedIn=${auth.currentUser != null}, " +
+                    "uidMatch=${auth.currentUser?.uid == userId} | message=${e.message}",
+                e
+            )
             handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
         }
@@ -367,5 +554,45 @@ class FirestoreVaultRepository(
             handleFirestoreError(e, OperationType.DELETE, path)
             Result.failure(e)
         }
+    }
+
+    private fun logCardSaveFailure(
+        op: String,
+        path: String,
+        expectedUserId: String,
+        cardId: String,
+        labelLen: Int,
+        category: CardCategory,
+        accentColor: CardAccentColor,
+        primaryTech: NfcTechType,
+        maskedUidLen: Int,
+        hceSupported: Boolean,
+        activeHce: Boolean,
+        encryptedPayloadLen: Int,
+        payloadIvLen: Int,
+        cryptoVersion: Int,
+        deactivateCount: Int,
+        exception: Throwable
+    ) {
+        logCardSaveException(
+            op = op,
+            path = path,
+            expectedUserId = expectedUserId,
+            authUid = auth.currentUser?.uid,
+            cardId = cardId,
+            labelLen = labelLen,
+            category = category,
+            accentColor = accentColor,
+            primaryTech = primaryTech,
+            maskedUidLen = maskedUidLen,
+            hceSupported = hceSupported,
+            activeHce = activeHce,
+            encryptedPayloadLen = encryptedPayloadLen,
+            payloadIvLen = payloadIvLen,
+            cryptoVersion = cryptoVersion,
+            deactivateCount = deactivateCount,
+            exception = exception,
+            emulationCount = if (op == "updateCard") null else 0L
+        )
     }
 }

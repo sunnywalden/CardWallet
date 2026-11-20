@@ -88,6 +88,8 @@ import com.aistudio.nfcshield.data.model.HceTapEvent
 import com.aistudio.nfcshield.data.model.UiState
 import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.ui.components.AccessCardVisual
+import com.aistudio.nfcshield.ui.components.DeleteCardConfirmDialog
+import com.aistudio.nfcshield.ui.components.SwipeToDeleteCardContainer
 import com.aistudio.nfcshield.ui.components.resolvedIcon
 import com.aistudio.nfcshield.ui.components.toColor
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
@@ -113,6 +115,7 @@ fun WalletHomeScreen(
     recentTapEvents: List<HceTapEvent>,
     onCardClick: (DecryptedAccessCard) -> Unit,
     onToggleHce: (DecryptedAccessCard) -> Unit,
+    onDeleteCard: (DecryptedAccessCard) -> Unit = {},
     onNavigateToScan: () -> Unit,
     onOpenNfcSettings: () -> Unit,
     onLockVaultNow: () -> Unit,
@@ -122,6 +125,7 @@ fun WalletHomeScreen(
     var searchExpanded by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(HomeCardFilter.ALL) }
+    var pendingDeleteCard by remember { mutableStateOf<DecryptedAccessCard?>(null) }
     val revealedCardIds = remember { mutableSetOf<String>() }
     var initialLoadBatchPending by remember { mutableStateOf(true) }
 
@@ -537,11 +541,16 @@ fun WalletHomeScreen(
                                                 )
                                             )
                                         ) {
-                                            VaultCardListRow(
-                                                card = card,
-                                                onClick = { onCardClick(card) },
-                                                onToggleHce = { onToggleHce(card) }
-                                            )
+                                            SwipeToDeleteCardContainer(
+                                                cardId = card.id,
+                                                onRequestDelete = { pendingDeleteCard = card }
+                                            ) {
+                                                VaultCardListRow(
+                                                    card = card,
+                                                    onClick = { onCardClick(card) },
+                                                    onToggleHce = { onToggleHce(card) }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -569,6 +578,17 @@ fun WalletHomeScreen(
                 imageVector = Icons.Filled.Add,
                 contentDescription = stringResource(R.string.wallet_fab_add_desc),
                 modifier = Modifier.size(26.dp)
+            )
+        }
+
+        pendingDeleteCard?.let { targetCard ->
+            DeleteCardConfirmDialog(
+                card = targetCard,
+                onDismiss = { pendingDeleteCard = null },
+                onConfirmDelete = {
+                    pendingDeleteCard = null
+                    onDeleteCard(targetCard)
+                }
             )
         }
     }

@@ -487,6 +487,13 @@ private fun AuthenticatedVaultHost(
                                         recentTapEvents = recentHceEvents,
                                         onCardClick = { card -> selectedCardId = card.id },
                                         onToggleHce = { card -> viewModel.toggleActiveHce(card, syncHceAid) },
+                                        onDeleteCard = { card ->
+                                            viewModel.deleteCard(card, syncHceAid) {
+                                                if (selectedCardId == card.id) {
+                                                    selectedCardId = null
+                                                }
+                                            }
+                                        },
                                         onNavigateToScan = {
                                             physicalScanRequestNonce++
                                             activeTab = VaultTab.SCAN
