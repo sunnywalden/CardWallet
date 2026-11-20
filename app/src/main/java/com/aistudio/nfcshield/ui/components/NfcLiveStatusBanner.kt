@@ -1,4 +1,4 @@
-package com.example.ui.components
+package com.aistudio.nfcshield.ui.components
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -64,22 +64,22 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.R
-import com.example.nfc.HceAidManager
-import com.example.nfc.NfcHardwareStatus
-import com.example.ui.theme.JetBrainsMonoFontFamily
-import com.example.ui.theme.VaultAmber
-import com.example.ui.theme.VaultAmberContainer
-import com.example.ui.theme.VaultBorder
-import com.example.ui.theme.VaultCyan
-import com.example.ui.theme.VaultCyanContainer
-import com.example.ui.theme.VaultIceBlue
-import com.example.ui.theme.VaultIceBlueContainer
-import com.example.ui.theme.VaultObsidian
-import com.example.ui.theme.VaultSurface
-import com.example.ui.theme.VaultSurfaceElevated
-import com.example.ui.theme.VaultTextPrimary
-import com.example.ui.theme.VaultTextSecondary
+import com.aistudio.nfcshield.R
+import com.aistudio.nfcshield.nfc.HceAidManager
+import com.aistudio.nfcshield.nfc.NfcHardwareStatus
+import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
+import com.aistudio.nfcshield.ui.theme.VaultAmber
+import com.aistudio.nfcshield.ui.theme.VaultAmberContainer
+import com.aistudio.nfcshield.ui.theme.VaultBorder
+import com.aistudio.nfcshield.ui.theme.VaultCyan
+import com.aistudio.nfcshield.ui.theme.VaultCyanContainer
+import com.aistudio.nfcshield.ui.theme.VaultIceBlue
+import com.aistudio.nfcshield.ui.theme.VaultIceBlueContainer
+import com.aistudio.nfcshield.ui.theme.VaultObsidian
+import com.aistudio.nfcshield.ui.theme.VaultSurface
+import com.aistudio.nfcshield.ui.theme.VaultSurfaceElevated
+import com.aistudio.nfcshield.ui.theme.VaultTextPrimary
+import com.aistudio.nfcshield.ui.theme.VaultTextSecondary
 
 /**
  * Observes Android's NFC adapter state in real time via ACTION_ADAPTER_STATE_CHANGED broadcast
