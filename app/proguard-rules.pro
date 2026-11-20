@@ -20,9 +20,9 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
--keep class com.example.ShieldVaultApplication { *; }
--keep class com.example.MainActivity { *; }
--keep class com.example.nfc.AccessCardHceService { *; }
--keep class com.example.nfc.HceQuickTileService { *; }
--keep class com.example.data.model.** { *; }
+-keep class com.aistudio.nfcshield.ShieldVaultApplication { *; }
+-keep class com.aistudio.nfcshield.MainActivity { *; }
+-keep class com.aistudio.nfcshield.nfc.AccessCardHceService { *; }
+-keep class com.aistudio.nfcshield.nfc.HceQuickTileService { *; }
+-keep class com.aistudio.nfcshield.data.model.** { *; }
 

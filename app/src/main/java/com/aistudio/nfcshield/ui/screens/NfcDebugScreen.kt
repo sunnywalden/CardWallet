@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
@@ -100,6 +101,7 @@ fun NfcDebugScreen(
     readerModeEnabled: Boolean,
     tagLogs: List<ScannedNfcTagInfo>,
     hceEvents: List<HceTapEvent>,
+    onBack: (() -> Unit)? = null,
     onToggleReaderMode: (Boolean) -> Unit,
     onRefreshStatus: () -> Unit,
     onOpenNfcSettings: () -> Unit,
@@ -126,12 +128,14 @@ fun NfcDebugScreen(
         }
     }
 
+    val colorScheme = MaterialTheme.colorScheme
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(VaultObsidian)
+            .background(colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 20.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Column(
@@ -140,23 +144,43 @@ fun NfcDebugScreen(
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header
+            // Header with optional Back button (nested under Settings)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.debug_title),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = VaultTextPrimary
-                    )
-                    Text(
-                        text = stringResource(R.string.debug_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = VaultTextSecondary
-                    )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (onBack != null) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("debug_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回设置",
+                                tint = colorScheme.onBackground
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.debug_title),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = colorScheme.onBackground
+                        )
+                        Text(
+                            text = stringResource(R.string.debug_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 IconButton(
                     onClick = {
@@ -170,7 +194,7 @@ fun NfcDebugScreen(
                     Icon(
                         imageVector = Icons.Filled.Refresh,
                         contentDescription = "刷新 NFC 状态",
-                        tint = VaultCyan
+                        tint = VaultTextPrimary
                     )
                 }
             }

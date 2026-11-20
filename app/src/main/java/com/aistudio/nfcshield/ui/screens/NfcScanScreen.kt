@@ -54,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -75,10 +76,12 @@ import com.aistudio.nfcshield.ui.components.toColor
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
 import com.aistudio.nfcshield.ui.theme.VaultAmber
 import com.aistudio.nfcshield.ui.theme.VaultAmberContainer
-import com.aistudio.nfcshield.ui.theme.VaultBorder
 import com.aistudio.nfcshield.ui.theme.VaultCyan
-import com.aistudio.nfcshield.ui.theme.VaultCyanContainer
+import com.aistudio.nfcshield.ui.theme.VaultHairline
+import com.aistudio.nfcshield.ui.theme.VaultHairlineStrong
 import com.aistudio.nfcshield.ui.theme.VaultObsidian
+import com.aistudio.nfcshield.ui.theme.VaultOnPrimaryCta
+import com.aistudio.nfcshield.ui.theme.VaultPrimaryCta
 import com.aistudio.nfcshield.ui.theme.VaultRose
 import com.aistudio.nfcshield.ui.theme.VaultSurface
 import com.aistudio.nfcshield.ui.theme.VaultSurfaceElevated
@@ -160,22 +163,27 @@ fun NfcScanScreen(
     val effectivePrimaryTech = if (isManualMode) NfcTechType.ISO_DEP else (scannedTag?.primaryTech ?: NfcTechType.ISO_DEP)
     val effectiveHceSupported = if (isManualMode) true else (scannedTag?.hceSupported == true)
 
+    val colorScheme = MaterialTheme.colorScheme
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(VaultObsidian)
+            .background(colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Column(
-            modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(),
+            modifier = Modifier
+                .widthIn(max = 620.dp)
+                .fillMaxWidth()
+                .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
                 text = stringResource(R.string.scan_title),
                 style = MaterialTheme.typography.headlineMedium,
-                color = VaultTextPrimary
+                color = colorScheme.onBackground
             )
 
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -184,10 +192,12 @@ fun NfcScanScreen(
                     onClick = { selectedTab = 0 },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                     colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = VaultCyanContainer,
-                        activeContentColor = VaultCyan,
-                        inactiveContainerColor = VaultSurface,
-                        inactiveContentColor = VaultTextSecondary
+                        activeContainerColor = colorScheme.primary,
+                        activeContentColor = colorScheme.onPrimary,
+                        inactiveContainerColor = colorScheme.surface,
+                        inactiveContentColor = colorScheme.onSurfaceVariant,
+                        activeBorderColor = colorScheme.primary,
+                        inactiveBorderColor = VaultHairline
                     ),
                     modifier = Modifier.testTag("scan_mode_hardware_tab")
                 ) {
@@ -198,10 +208,12 @@ fun NfcScanScreen(
                     onClick = { selectedTab = 1 },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                     colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = VaultCyanContainer,
-                        activeContentColor = VaultCyan,
-                        inactiveContainerColor = VaultSurface,
-                        inactiveContentColor = VaultTextSecondary
+                        activeContainerColor = colorScheme.primary,
+                        activeContentColor = colorScheme.onPrimary,
+                        inactiveContainerColor = colorScheme.surface,
+                        inactiveContentColor = colorScheme.onSurfaceVariant,
+                        activeBorderColor = colorScheme.primary,
+                        inactiveBorderColor = VaultHairline
                     ),
                     modifier = Modifier.testTag("scan_mode_manual_tab")
                 ) {
@@ -212,8 +224,8 @@ fun NfcScanScreen(
             if (selectedTab == 0) {
                 Surface(
                     shape = RoundedCornerShape(22.dp),
-                    color = VaultSurfaceElevated,
-                    border = BorderStroke(1.dp, if (scannedTag != null) VaultCyan else VaultBorder)
+                    color = VaultSurface,
+                    border = BorderStroke(1.dp, if (scannedTag != null) VaultCyan.copy(alpha = 0.5f) else VaultHairline)
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(20.dp),
@@ -223,36 +235,38 @@ fun NfcScanScreen(
                         when {
                             !nfcStatus.nfcSupported -> {
                                 Text(
-                                    text = "未检测到本机 NFC 硬件。如果您正在浏览器 Preview（云端模拟器）中预览，浏览器无法透传手机背部的物理 NFC 信号；请导出 APK 安装到三星等真机后即可贴卡读取。",
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    text = "未检测到本机 NFC 硬件。如果您正在云端预览环境中查看，请导出 APK 安装到真机后即可贴卡读取。",
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = VaultAmber,
                                     textAlign = TextAlign.Center
                                 )
                                 OutlinedButton(
                                     onClick = { selectedTab = 1 },
-                                    border = BorderStroke(1.dp, VaultCyan),
+                                    border = BorderStroke(1.dp, VaultHairlineStrong),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.testTag("switch_to_manual_hce_button")
                                 ) {
-                                    Text("切换至「手动录入 HCE 卡」", color = VaultCyan)
+                                    Text("切换至「手动录入 HCE」", color = VaultTextPrimary)
                                 }
                             }
 
                             !nfcStatus.nfcEnabled -> {
                                 Text(
                                     text = stringResource(R.string.scan_nfc_disabled),
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = VaultAmber,
                                     textAlign = TextAlign.Center
                                 )
                                 OutlinedButton(
                                     onClick = onOpenNfcSettings,
-                                    border = BorderStroke(1.dp, VaultAmber)
+                                    border = BorderStroke(1.dp, VaultAmber.copy(alpha = 0.6f)),
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.Settings,
                                         contentDescription = null,
                                         tint = VaultAmber,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(Modifier.size(6.dp))
                                     Text(stringResource(R.string.scan_open_nfc_settings), color = VaultAmber)
@@ -279,10 +293,10 @@ fun NfcScanScreen(
                                     Surface(
                                         shape = RoundedCornerShape(14.dp),
                                         color = VaultObsidian,
-                                        border = BorderStroke(1.dp, VaultBorder)
+                                        border = BorderStroke(1.dp, VaultHairline)
                                     ) {
                                         Column(
-                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            modifier = Modifier.fillMaxWidth().padding(14.dp),
                                             verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             Text(
@@ -293,7 +307,7 @@ fun NfcScanScreen(
                                             )
                                             Text(
                                                 text = "主协议: ${tagInfo.primaryTech.displayName}",
-                                                style = MaterialTheme.typography.bodyMedium,
+                                                style = MaterialTheme.typography.bodySmall,
                                                 color = VaultTextPrimary
                                             )
                                             if (tagInfo.atqaHex.isNotEmpty() || tagInfo.sakHex.isNotEmpty()) {
@@ -307,14 +321,14 @@ fun NfcScanScreen(
                                             if (tagInfo.mifareSummary.isNotEmpty()) {
                                                 Text(
                                                     text = tagInfo.mifareSummary,
-                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    style = MaterialTheme.typography.bodySmall,
                                                     color = VaultTextSecondary
                                                 )
                                             }
                                             if (tagInfo.ndefSummary.isNotEmpty()) {
                                                 Text(
                                                     text = "NDEF: ${tagInfo.ndefSummary}",
-                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    style = MaterialTheme.typography.bodySmall,
                                                     color = VaultTextSecondary
                                                 )
                                             }
@@ -325,7 +339,7 @@ fun NfcScanScreen(
                                         Surface(
                                             shape = RoundedCornerShape(12.dp),
                                             color = VaultAmberContainer,
-                                            border = BorderStroke(1.dp, VaultAmber.copy(alpha = 0.45f))
+                                            border = BorderStroke(1.dp, VaultAmber.copy(alpha = 0.4f))
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(12.dp),
@@ -336,11 +350,11 @@ fun NfcScanScreen(
                                                     imageVector = Icons.Filled.Info,
                                                     contentDescription = null,
                                                     tint = VaultAmber,
-                                                    modifier = Modifier.size(18.dp)
+                                                    modifier = Modifier.size(16.dp)
                                                 )
                                                 Text(
-                                                    text = "此物理卡依赖固定硬件 UID 或加密扇区（${tagInfo.primaryTech.displayName}）。Android HCE 每次刷卡会随机化 UID，因此本卡将作为加密凭证备份保存（仅读取），如需 HCE 模拟刷卡请使用支持 ISO-DEP 动态 AID 的门禁系统。",
-                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    text = "此物理卡依赖固定硬件 UID 或加密扇区（${tagInfo.primaryTech.displayName}），将作为只读加密档案同步保存。",
+                                                    style = MaterialTheme.typography.bodySmall,
                                                     color = VaultTextPrimary
                                                 )
                                             }
@@ -349,17 +363,18 @@ fun NfcScanScreen(
 
                                     OutlinedButton(
                                         onClick = { scannedTag = null },
-                                        border = BorderStroke(1.dp, VaultBorder),
+                                        border = BorderStroke(1.dp, VaultHairlineStrong),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.testTag("rescan_nfc_button")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.Refresh,
                                             contentDescription = null,
-                                            tint = VaultCyan,
-                                            modifier = Modifier.size(18.dp)
+                                            tint = VaultTextPrimary,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(Modifier.size(6.dp))
-                                        Text("重新贴卡扫描", color = VaultCyan)
+                                        Text("重新贴卡扫描", color = VaultTextPrimary)
                                     }
                                 }
                             }
@@ -372,7 +387,7 @@ fun NfcScanScreen(
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = VaultSurface,
-                border = BorderStroke(1.dp, VaultBorder)
+                border = BorderStroke(1.dp, VaultHairline)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(18.dp),
@@ -386,10 +401,10 @@ fun NfcScanScreen(
                             imageVector = Icons.Filled.VerifiedUser,
                             contentDescription = null,
                             tint = VaultCyan,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "加密凭证信息（AES-256-GCM 端到端保护）",
+                            text = "加密凭证信息",
                             style = MaterialTheme.typography.titleMedium,
                             color = VaultTextPrimary
                         )
@@ -400,31 +415,40 @@ fun NfcScanScreen(
                         onValueChange = { if (it.length <= 40) label = it },
                         label = { Text("门禁卡名称（必填，如：东门门禁）") },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         colors = vaultTextFieldColors(),
                         modifier = Modifier.fillMaxWidth().testTag("card_label_input")
                     )
 
-                    Text("场所分类", style = MaterialTheme.typography.labelLarge, color = VaultTextSecondary)
+                    Text("场所分类", style = MaterialTheme.typography.labelMedium, color = VaultTextSecondary)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         CardCategory.entries.forEach { item ->
+                            val selected = category == item
                             FilterChip(
-                                selected = category == item,
+                                selected = selected,
                                 onClick = { category = item },
-                                label = { Text(item.displayName) },
+                                label = { Text(item.displayName, style = MaterialTheme.typography.labelMedium) },
+                                shape = CircleShape,
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = VaultCyanContainer,
-                                    selectedLabelColor = VaultCyan,
+                                    selectedContainerColor = VaultPrimaryCta,
+                                    selectedLabelColor = VaultOnPrimaryCta,
                                     containerColor = VaultSurfaceElevated,
                                     labelColor = VaultTextSecondary
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = selected,
+                                    borderColor = VaultHairline,
+                                    selectedBorderColor = Color.Transparent
                                 )
                             )
                         }
                     }
 
-                    Text("卡片主题色", style = MaterialTheme.typography.labelLarge, color = VaultTextSecondary)
+                    Text("卡片光晕色", style = MaterialTheme.typography.labelMedium, color = VaultTextSecondary)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         CardAccentColor.entries.forEach { accent ->
                             val c = accent.toColor()
@@ -433,8 +457,12 @@ fun NfcScanScreen(
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(CircleShape)
-                                    .background(c.copy(alpha = 0.22f))
-                                    .border(if (selected) 2.5.dp else 1.dp, if (selected) c else VaultBorder, CircleShape)
+                                    .background(c.copy(alpha = 0.2f))
+                                    .border(
+                                        width = if (selected) 2.dp else 1.dp,
+                                        color = if (selected) c else VaultHairline,
+                                        shape = CircleShape
+                                    )
                                     .clickable { accentColor = accent },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -443,7 +471,7 @@ fun NfcScanScreen(
                                         imageVector = Icons.Filled.Check,
                                         contentDescription = accent.displayName,
                                         tint = c,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
@@ -456,6 +484,7 @@ fun NfcScanScreen(
                         label = { Text("卡片 UID / 卡号（十六进制，可选）") },
                         placeholder = { Text("例如 04:A1:B2:C3") },
                         singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
                         colors = vaultTextFieldColors(),
                         modifier = Modifier.fillMaxWidth().testTag("card_uid_input")
                     )
@@ -467,6 +496,7 @@ fun NfcScanScreen(
                             label = { Text("HCE 应用标识 AID（5~16 字节 Hex）") },
                             placeholder = { Text(NfcTagParser.DEFAULT_HCE_AID) },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             colors = vaultTextFieldColors(),
                             modifier = Modifier.fillMaxWidth().testTag("card_aid_input")
                         )
@@ -474,9 +504,10 @@ fun NfcScanScreen(
                         OutlinedTextField(
                             value = apduResponseInput,
                             onValueChange = { apduResponseInput = it },
-                            label = { Text("APDU 响应令牌载荷（十六进制，可选）") },
+                            label = { Text("APDU 响应载荷（十六进制，可选）") },
                             placeholder = { Text("例如 4B45593031（将附加 9000 返回）") },
                             singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
                             colors = vaultTextFieldColors(),
                             modifier = Modifier.fillMaxWidth().testTag("card_apdu_input")
                         )
@@ -512,6 +543,7 @@ fun NfcScanScreen(
                         },
                         minLines = 2,
                         maxLines = 4,
+                        shape = RoundedCornerShape(14.dp),
                         colors = vaultTextFieldColors(),
                         modifier = Modifier.fillMaxWidth().testTag("card_notes_input")
                     )
@@ -519,7 +551,7 @@ fun NfcScanScreen(
                     if (formError != null) {
                         Text(
                             text = formError.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = VaultRose
                         )
                     }
@@ -532,7 +564,7 @@ fun NfcScanScreen(
                                 return@Button
                             }
                             if (!isManualMode && scannedTag == null && uidHexInput.isBlank()) {
-                                formError = "请先贴近物理 NFC 门禁卡扫描，或切换至「手动录入 HCE 卡」"
+                                formError = "请先贴近物理 NFC 门禁卡扫描，或切换至「手动录入 HCE」"
                                 return@Button
                             }
                             val cleanAid = NfcTagParser.normalizeHex(aidHexInput)
@@ -579,8 +611,8 @@ fun NfcScanScreen(
                         },
                         enabled = !isSaving,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = VaultCyan,
-                            contentColor = VaultObsidian
+                            containerColor = VaultPrimaryCta,
+                            contentColor = VaultOnPrimaryCta
                         ),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
@@ -592,12 +624,12 @@ fun NfcScanScreen(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
                                 strokeWidth = 2.dp,
-                                color = VaultObsidian
+                                color = VaultOnPrimaryCta
                             )
                         } else {
                             Text(
                                 text = stringResource(R.string.scan_save_encrypted),
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
@@ -609,14 +641,14 @@ fun NfcScanScreen(
 
 @Composable
 internal fun vaultTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = VaultCyan,
-    unfocusedBorderColor = VaultBorder,
-    focusedLabelColor = VaultCyan,
-    unfocusedLabelColor = VaultTextSecondary,
-    focusedTextColor = VaultTextPrimary,
-    unfocusedTextColor = VaultTextPrimary,
-    focusedContainerColor = VaultSurfaceElevated,
-    unfocusedContainerColor = VaultSurfaceElevated
+    focusedBorderColor = VaultHairlineStrong,
+    unfocusedBorderColor = VaultHairline,
+    focusedLabelColor = MaterialTheme.colorScheme.primary,
+    unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer
 )
 
 private const val MAX_NOTES_LENGTH = 1500

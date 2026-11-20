@@ -82,7 +82,11 @@ import com.aistudio.nfcshield.ui.theme.VaultAmberContainer
 import com.aistudio.nfcshield.ui.theme.VaultBorder
 import com.aistudio.nfcshield.ui.theme.VaultCyan
 import com.aistudio.nfcshield.ui.theme.VaultCyanContainer
+import com.aistudio.nfcshield.ui.theme.VaultHairline
+import com.aistudio.nfcshield.ui.theme.VaultHairlineStrong
 import com.aistudio.nfcshield.ui.theme.VaultObsidian
+import com.aistudio.nfcshield.ui.theme.VaultOnPrimaryCta
+import com.aistudio.nfcshield.ui.theme.VaultPrimaryCta
 import com.aistudio.nfcshield.ui.theme.VaultRose
 import com.aistudio.nfcshield.ui.theme.VaultSurface
 import com.aistudio.nfcshield.ui.theme.VaultSurfaceElevated
@@ -157,10 +161,12 @@ fun CardDetailScreen(
         formatVaultTimestamp(card.createdAt)
     }
 
+    val colorScheme = MaterialTheme.colorScheme
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(VaultObsidian)
+            .background(colorScheme.background)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -187,14 +193,14 @@ fun CardDetailScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回卡包",
-                            tint = VaultTextPrimary
+                            tint = colorScheme.onBackground
                         )
                     }
                     Column {
                         Text(
                             text = "门禁卡详情预览",
                             style = MaterialTheme.typography.headlineSmall,
-                            color = VaultTextPrimary
+                            color = colorScheme.onBackground
                         )
                         if (hasAppearanceChanges) {
                             Text(
@@ -244,8 +250,8 @@ fun CardDetailScreen(
             // Encrypted Storage Timestamp & Security Status Card
             Surface(
                 shape = RoundedCornerShape(18.dp),
-                color = VaultSurfaceElevated,
-                border = BorderStroke(1.dp, VaultBorder)
+                color = VaultSurface,
+                border = BorderStroke(1.dp, VaultHairline)
             ) {
                 Column(
                     modifier = Modifier
@@ -320,7 +326,7 @@ fun CardDetailScreen(
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = VaultSurface,
-                border = BorderStroke(1.dp, if (hasAppearanceChanges) VaultCyan else VaultBorder)
+                border = BorderStroke(1.dp, if (hasAppearanceChanges) VaultHairlineStrong else VaultHairline)
             ) {
                 Column(
                     modifier = Modifier
@@ -494,8 +500,8 @@ fun CardDetailScreen(
                         },
                         enabled = hasAppearanceChanges && !isSavingCustomization,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = VaultCyan,
-                            contentColor = VaultObsidian,
+                            containerColor = VaultPrimaryCta,
+                            contentColor = VaultOnPrimaryCta,
                             disabledContainerColor = VaultSurfaceElevated,
                             disabledContentColor = VaultTextSecondary
                         ),
@@ -509,12 +515,12 @@ fun CardDetailScreen(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = VaultObsidian
+                                color = VaultOnPrimaryCta
                             )
                         } else {
                             Text(
                                 text = if (hasAppearanceChanges) "保存重命名与个性化图标" else "当前外观已同步至云端",
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
@@ -526,10 +532,10 @@ fun CardDetailScreen(
                 Button(
                     onClick = { onToggleHce(card) },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (card.activeHce) VaultSurfaceElevated else VaultCyan,
-                        contentColor = if (card.activeHce) VaultCyan else VaultObsidian
+                        containerColor = if (card.activeHce) VaultSurfaceElevated else VaultPrimaryCta,
+                        contentColor = if (card.activeHce) VaultCyan else VaultOnPrimaryCta
                     ),
-                    border = if (card.activeHce) BorderStroke(1.dp, VaultCyan) else null,
+                    border = if (card.activeHce) BorderStroke(1.dp, VaultCyan.copy(alpha = 0.55f)) else null,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -540,7 +546,7 @@ fun CardDetailScreen(
                     Spacer(Modifier.size(8.dp))
                     Text(
                         text = if (card.activeHce) "已激活 HCE 模拟刷卡（点击停用）" else "设为当前活跃 HCE 模拟卡",
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
                 Spacer(Modifier.height(6.dp))

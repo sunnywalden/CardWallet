@@ -2,6 +2,7 @@ package com.aistudio.nfcshield.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,8 +24,6 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,10 +43,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -57,8 +57,9 @@ import com.aistudio.nfcshield.R
 import com.aistudio.nfcshield.auth.BiometricHelper
 import com.aistudio.nfcshield.ui.components.PinDotsIndicator
 import com.aistudio.nfcshield.ui.components.PinKeypad
-import com.aistudio.nfcshield.ui.theme.VaultBorder
 import com.aistudio.nfcshield.ui.theme.VaultCyan
+import com.aistudio.nfcshield.ui.theme.VaultHairline
+import com.aistudio.nfcshield.ui.theme.VaultHairlineStrong
 import com.aistudio.nfcshield.ui.theme.VaultObsidian
 import com.aistudio.nfcshield.ui.theme.VaultRose
 import com.aistudio.nfcshield.ui.theme.VaultSurface
@@ -87,10 +88,12 @@ fun VaultLockScreen(
     val activity = context as? FragmentActivity
     val biometricHardwareReady = remember(context) { BiometricHelper.isBiometricAvailable(context) }
 
+    val colorScheme = MaterialTheme.colorScheme
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(VaultObsidian)
+            .background(colorScheme.background)
             .safeDrawingPadding()
     ) {
         when (gateState) {
@@ -100,10 +103,10 @@ fun VaultLockScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    CircularProgressIndicator(color = VaultCyan)
+                    CircularProgressIndicator(color = VaultTextPrimary, strokeWidth = 2.dp)
                     Text(
                         text = "正在验证云端保险库密钥…",
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = VaultTextSecondary
                     )
                 }
@@ -118,12 +121,21 @@ fun VaultLockScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Lock,
-                        contentDescription = null,
-                        tint = VaultRose,
-                        modifier = Modifier.size(44.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(VaultSurface)
+                            .border(1.dp, VaultRose.copy(alpha = 0.4f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Lock,
+                            contentDescription = null,
+                            tint = VaultRose,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                     Text(
                         text = "云端保险库同步受限",
                         style = MaterialTheme.typography.headlineSmall,
@@ -137,7 +149,8 @@ fun VaultLockScreen(
                     )
                     OutlinedButton(
                         onClick = onSignOut,
-                        border = BorderStroke(1.dp, VaultBorder),
+                        border = BorderStroke(1.dp, VaultHairlineStrong),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.testTag("vault_error_sign_out")
                     ) {
                         Text("切换或退出 Google 账号", color = VaultTextPrimary)
@@ -167,12 +180,8 @@ fun VaultLockScreen(
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
-                            Lifecycle.Event.ON_RESUME -> {
-                                isResumed = true
-                            }
-                            Lifecycle.Event.ON_PAUSE -> {
-                                isResumed = false
-                            }
+                            Lifecycle.Event.ON_RESUME -> isResumed = true
+                            Lifecycle.Event.ON_PAUSE -> isResumed = false
                             Lifecycle.Event.ON_STOP -> {
                                 isResumed = false
                                 autoPrompted = false
@@ -250,7 +259,7 @@ fun VaultLockScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                        .padding(horizontal = 24.dp, vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -272,10 +281,10 @@ fun VaultLockScreen(
                                 imageVector = Icons.AutoMirrored.Filled.Logout,
                                 contentDescription = null,
                                 tint = VaultTextSecondary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.size(4.dp))
-                            Text("退出账号", color = VaultTextSecondary)
+                            Text("退出", color = VaultTextSecondary)
                         }
                     }
 
@@ -284,16 +293,19 @@ fun VaultLockScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = VaultCyan.copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, VaultCyan.copy(alpha = 0.45f))
+                        Box(
+                            modifier = Modifier
+                                .size(60.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(VaultSurface)
+                                .border(1.dp, VaultHairlineStrong, RoundedCornerShape(18.dp)),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Lock,
                                 contentDescription = "保险库已锁定",
-                                tint = VaultCyan,
-                                modifier = Modifier.padding(16.dp).size(32.dp)
+                                tint = VaultTextPrimary,
+                                modifier = Modifier.size(26.dp)
                             )
                         }
 
@@ -304,27 +316,38 @@ fun VaultLockScreen(
                         )
                         Text(
                             text = stringResource(R.string.vault_unlock_subtitle),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = VaultTextSecondary,
                             textAlign = TextAlign.Center
                         )
 
                         if (canShowBiometric) {
                             Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = VaultCyan.copy(alpha = 0.10f),
-                                border = BorderStroke(1.dp, VaultCyan.copy(alpha = 0.35f))
+                                shape = CircleShape,
+                                color = VaultSurface,
+                                border = BorderStroke(1.dp, VaultHairline)
                             ) {
-                                Text(
-                                    text = if (BiometricHelper.isStrongBiometricAvailable(context)) {
-                                        "Android Keystore 硬件私钥已绑定生物识别"
-                                    } else {
-                                        "Keystore 硬件密钥保护已就绪"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = VaultCyan,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(VaultCyan)
+                                    )
+                                    Text(
+                                        text = if (BiometricHelper.isStrongBiometricAvailable(context)) {
+                                            "Keystore 硬件私钥已绑定生物识别"
+                                        } else {
+                                            "Keystore 硬件密钥保护已就绪"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = VaultTextSecondary
+                                    )
+                                }
                             }
                         }
 
@@ -347,18 +370,18 @@ fun VaultLockScreen(
                         if (displayStatus != null) {
                             Text(
                                 text = displayStatus,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (gateState.errorMessage != null || gateState.lockoutSecondsRemaining > 0) VaultRose else VaultCyan,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (gateState.errorMessage != null || gateState.lockoutSecondsRemaining > 0) VaultRose else VaultTextSecondary,
                                 textAlign = TextAlign.Center
                             )
                         } else if (gateState.isBusy) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier.size(20.dp),
                                 strokeWidth = 2.dp,
-                                color = VaultCyan
+                                color = VaultTextPrimary
                             )
                         } else {
-                            Spacer(Modifier.height(20.dp))
+                            Spacer(Modifier.height(18.dp))
                         }
 
                         PinKeypad(
@@ -397,7 +420,7 @@ fun VaultLockScreen(
                                 Spacer(Modifier.size(6.dp))
                                 Text(
                                     text = stringResource(R.string.vault_use_biometric),
-                                    color = VaultCyan
+                                    color = VaultTextPrimary
                                 )
                             }
                         }
@@ -432,7 +455,7 @@ private fun PinSetupContent(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .padding(horizontal = 24.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
@@ -441,7 +464,7 @@ private fun PinSetupContent(
             horizontalArrangement = Arrangement.End
         ) {
             TextButton(onClick = onSignOut) {
-                Text("更换 Google 账号", color = VaultTextSecondary)
+                Text("更换账号", color = VaultTextSecondary)
             }
         }
 
@@ -450,16 +473,19 @@ private fun PinSetupContent(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = VaultCyan.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, VaultCyan.copy(alpha = 0.5f))
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(VaultSurface)
+                    .border(1.dp, VaultHairlineStrong, RoundedCornerShape(18.dp)),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Filled.Shield,
                     contentDescription = null,
-                    tint = VaultCyan,
-                    modifier = Modifier.padding(16.dp).size(32.dp)
+                    tint = VaultTextPrimary,
+                    modifier = Modifier.size(26.dp)
                 )
             }
 
@@ -470,7 +496,7 @@ private fun PinSetupContent(
             )
             Text(
                 text = stringResource(if (isConfirmStep) R.string.vault_setup_confirm_subtitle else R.string.vault_setup_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = VaultTextSecondary,
                 textAlign = TextAlign.Center
             )
@@ -484,7 +510,7 @@ private fun PinSetupContent(
             if (errorMessage != null) {
                 Text(
                     text = errorMessage.orEmpty(),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = VaultRose,
                     textAlign = TextAlign.Center
                 )
@@ -493,8 +519,8 @@ private fun PinSetupContent(
             if (biometricHardwareReady) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = VaultSurfaceElevated,
-                    border = BorderStroke(1.dp, VaultBorder)
+                    color = VaultSurface,
+                    border = BorderStroke(1.dp, VaultHairline)
                 ) {
                     Row(
                         modifier = Modifier
@@ -533,7 +559,7 @@ private fun PinSetupContent(
             }
 
             if (isSaving) {
-                CircularProgressIndicator(color = VaultCyan)
+                CircularProgressIndicator(color = VaultTextPrimary, strokeWidth = 2.dp)
             }
 
             PinKeypad(

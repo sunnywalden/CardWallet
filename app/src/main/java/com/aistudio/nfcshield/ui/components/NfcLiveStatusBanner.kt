@@ -33,7 +33,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Nfc
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
@@ -52,8 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -70,14 +67,12 @@ import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
 import com.aistudio.nfcshield.ui.theme.VaultAmber
 import com.aistudio.nfcshield.ui.theme.VaultAmberContainer
-import com.aistudio.nfcshield.ui.theme.VaultBorder
 import com.aistudio.nfcshield.ui.theme.VaultCyan
-import com.aistudio.nfcshield.ui.theme.VaultCyanContainer
+import com.aistudio.nfcshield.ui.theme.VaultHairline
 import com.aistudio.nfcshield.ui.theme.VaultIceBlue
-import com.aistudio.nfcshield.ui.theme.VaultIceBlueContainer
 import com.aistudio.nfcshield.ui.theme.VaultObsidian
 import com.aistudio.nfcshield.ui.theme.VaultSurface
-import com.aistudio.nfcshield.ui.theme.VaultSurfaceElevated
+import com.aistudio.nfcshield.ui.theme.VaultTextMuted
 import com.aistudio.nfcshield.ui.theme.VaultTextPrimary
 import com.aistudio.nfcshield.ui.theme.VaultTextSecondary
 
@@ -148,9 +143,9 @@ fun openSystemNfcSettings(context: Context): Boolean {
 }
 
 /**
- * Compact top-of-screen real-time NFC adapter monitor bar.
- * Displays live adapter state (ON / OFF / Transitioning / Unsupported) and provides a direct
- * shortcut button to system NFC settings whenever NFC is turned off.
+ * Restrained Linear/Apple-style real-time NFC adapter status bar.
+ * Stays sleek and whisper-quiet when NFC is ON; expands with a crisp amber call-to-action
+ * to jump directly into Android NFC settings when NFC is OFF.
  */
 @Composable
 fun NfcLiveStatusBanner(
@@ -170,7 +165,7 @@ fun NfcLiveStatusBanner(
         initialValue = 0.35f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 950),
+            animation = tween(durationMillis = 1100),
             repeatMode = RepeatMode.Reverse
         ),
         label = "nfc_pulse_alpha"
@@ -181,31 +176,28 @@ fun NfcLiveStatusBanner(
             isEnabled -> VaultCyan
             isTransitioning -> VaultIceBlue
             isDisabled -> VaultAmber
-            else -> VaultTextSecondary
+            else -> VaultTextMuted
         },
-        animationSpec = tween(durationMillis = 240),
+        animationSpec = tween(durationMillis = 220),
         label = "nfc_accent"
     )
 
-    val containerTint by animateColorAsState(
+    val containerColor by animateColorAsState(
         targetValue = when {
-            isEnabled -> VaultCyanContainer
-            isTransitioning -> VaultIceBlueContainer
             isDisabled -> VaultAmberContainer
-            else -> VaultSurfaceElevated
+            else -> VaultSurface
         },
-        animationSpec = tween(durationMillis = 240),
+        animationSpec = tween(durationMillis = 220),
         label = "nfc_container"
     )
 
     val borderColor by animateColorAsState(
         targetValue = when {
-            isEnabled -> VaultCyan.copy(alpha = 0.45f)
-            isTransitioning -> VaultIceBlue.copy(alpha = 0.55f)
-            isDisabled -> VaultAmber.copy(alpha = 0.65f)
-            else -> VaultBorder
+            isDisabled -> VaultAmber.copy(alpha = 0.45f)
+            isTransitioning -> VaultIceBlue.copy(alpha = 0.35f)
+            else -> VaultHairline
         },
-        animationSpec = tween(durationMillis = 240),
+        animationSpec = tween(durationMillis = 220),
         label = "nfc_border"
     )
 
@@ -224,15 +216,9 @@ fun NfcLiveStatusBanner(
         else -> stringResource(R.string.nfc_monitor_unsupported_subtitle)
     }
 
-    val statusIcon = when {
-        isDisabled -> Icons.Filled.WarningAmber
-        isTransitioning -> Icons.Filled.Sync
-        else -> Icons.Filled.Nfc
-    }
-
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color.Transparent,
+        shape = RoundedCornerShape(14.dp),
+        color = containerColor,
         border = BorderStroke(1.dp, borderColor),
         modifier = modifier
             .fillMaxWidth()
@@ -241,33 +227,35 @@ fun NfcLiveStatusBanner(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(containerTint, VaultSurface)
-                    )
-                )
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = if (isDisabled) 8.dp else 9.dp
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(accentColor.copy(alpha = 0.16f)),
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(accentColor.copy(alpha = if (isDisabled) 0.18f else 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = statusIcon,
+                    imageVector = when {
+                        isDisabled -> Icons.Filled.WarningAmber
+                        isTransitioning -> Icons.Filled.Sync
+                        else -> Icons.Filled.Nfc
+                    },
                     contentDescription = titleText,
                     tint = accentColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -275,7 +263,7 @@ fun NfcLiveStatusBanner(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(7.dp)
+                            .size(6.dp)
                             .alpha(if (isEnabled || isTransitioning) pulseAlpha else 1f)
                             .clip(CircleShape)
                             .background(accentColor)
@@ -284,7 +272,7 @@ fun NfcLiveStatusBanner(
                         text = titleText,
                         style = MaterialTheme.typography.labelLarge,
                         color = VaultTextPrimary,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("nfc_live_status_title")
@@ -293,7 +281,7 @@ fun NfcLiveStatusBanner(
                 Text(
                     text = subtitleText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (isDisabled) VaultAmber.copy(alpha = 0.92f) else VaultTextSecondary,
+                    color = if (isDisabled) VaultAmber.copy(alpha = 0.9f) else VaultTextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -310,23 +298,18 @@ fun NfcLiveStatusBanner(
                         containerColor = VaultAmber,
                         contentColor = VaultObsidian
                     ),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     modifier = Modifier
                         .heightIn(min = 48.dp)
                         .testTag("nfc_status_open_settings_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
                     Text(
                         text = stringResource(R.string.nfc_monitor_open_settings),
                         style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
+                    Spacer(Modifier.width(2.dp))
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         contentDescription = null,
@@ -338,16 +321,16 @@ fun NfcLiveStatusBanner(
             if (isEnabled) {
                 Surface(
                     shape = RoundedCornerShape(999.dp),
-                    color = VaultCyan.copy(alpha = 0.14f),
-                    border = BorderStroke(1.dp, VaultCyan.copy(alpha = 0.4f))
+                    color = VaultCyan.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, VaultCyan.copy(alpha = 0.28f))
                 ) {
                     Text(
                         text = stringResource(R.string.nfc_monitor_live_badge),
                         fontFamily = JetBrainsMonoFontFamily,
                         style = MaterialTheme.typography.labelSmall,
                         color = VaultCyan,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                     )
                 }
             }
