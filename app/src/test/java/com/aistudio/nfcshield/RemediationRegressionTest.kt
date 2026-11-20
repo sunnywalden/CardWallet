@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Base64
 import androidx.test.core.app.ApplicationProvider
 import com.aistudio.nfcshield.crypto.Aes256GcmCryptoUtil
+import com.aistudio.nfcshield.crypto.DekUnwrapResult
 import com.aistudio.nfcshield.crypto.VaultCryptoEngine
 import com.aistudio.nfcshield.crypto.WrappedDekPayload
 import com.aistudio.nfcshield.data.local.ActiveHceSealer
@@ -22,6 +23,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -42,6 +44,12 @@ import javax.crypto.spec.SecretKeySpec
 @Config(sdk = [36])
 class RemediationRegressionTest {
 
+    @Before
+    fun installTestDeviceSealer() {
+        TestDeviceKeySealer.reset()
+        VaultCryptoEngine.deviceKeySealer = TestDeviceKeySealer
+    }
+
     private fun b64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
     private fun dek(): ByteArray = ByteArray(32) { (it + 1).toByte() }
@@ -57,29 +65,53 @@ class RemediationRegressionTest {
         return cipher.doFinal(dek)
     }
 
-    private fun verifierV1(kek: ByteArray, salt: ByteArray): ByteArray =
+    private fun verifierV2(kek: ByteArray, salt: ByteArray, iterations: Int): ByteArray =
         MessageDigest.getInstance("SHA-256").run {
-            update("shield-nfc-pin-verifier-v1".toByteArray(Charsets.UTF_8))
+            update("shield-nfc-pin-verifier-v2".toByteArray(Charsets.UTF_8))
             update(salt)
+            update(java.nio.ByteBuffer.allocate(4).putInt(iterations).array())
+            update(VaultCryptoEngine.KDF_SHA256.toByteArray(Charsets.UTF_8))
             update(kek)
             digest()
         }
 
-    // --- H1: new vaults are v2/SHA-256 and declare their algorithm ---
+    // --- H1: new vaults are v3/SHA-256, device-bound, and need no upgrade ---
 
     @Test
-    fun `wrap produces v2 payload with sha256 and upgrade is not needed`() {
+    fun `wrap produces device-bound v3 payload with sha256 and upgrade is not needed`() {
         val wrapped = VaultCryptoEngine.wrapDekWithPin(dek(), "246810".toCharArray())
         assertEquals(VaultCryptoEngine.KDF_SHA256, wrapped.kdfAlgorithm)
         assertEquals(VaultCryptoEngine.CURRENT_SCHEMA_VERSION, wrapped.schemaVersion)
         assertEquals(VaultCryptoEngine.DEFAULT_KDF_ITERATIONS, wrapped.kdfIterations)
-        assertFalse(VaultCryptoEngine.needsKdfUpgrade(wrapped))
+        assertEquals(VaultCryptoEngine.DEVICE_BINDING_ANDROID_KEYSTORE, wrapped.deviceBinding)
+        assertEquals(VaultCryptoEngine.DEVICE_BOUND_VERIFIER_MARKER, wrapped.pinVerifierBase64)
+        assertFalse(VaultCryptoEngine.needsVaultUpgrade(wrapped))
     }
 
-    // --- H1: legacy v1 payloads (SHA-1 and/or v1 verifier) stay readable and flag upgrade ---
+    @Test
+    fun `v3 unlock fails closed when the device key is missing or different`() {
+        val wrapped = VaultCryptoEngine.wrapDekWithPin(dek(), "246810".toCharArray())
+
+        // Fresh install / different device: the cloud doc alone is useless.
+        TestDeviceKeySealer.reset()
+        assertEquals(
+            DekUnwrapResult.DeviceBindingUnavailable,
+            VaultCryptoEngine.unwrapDekResult("246810".toCharArray(), wrapped)
+        )
+
+        // Key present but rotated (e.g. Keystore reset): blob no longer authenticates.
+        TestDeviceKeySealer.reset()
+        VaultCryptoEngine.deviceKeySealer.seal(byteArrayOf(1))
+        assertEquals(
+            DekUnwrapResult.DeviceBindingCorrupt,
+            VaultCryptoEngine.unwrapDekResult("246810".toCharArray(), wrapped)
+        )
+    }
+
+    // --- Eviction: v1 vault records are no longer readable ---
 
     @Test
-    fun `legacy v1 sha256 verifier payload unlocks and requests upgrade`() {
+    fun `v1 vault payloads are rejected after eviction`() {
         val d = dek()
         val salt = ByteArray(16) { (it * 3).toByte() }
         val iv = ByteArray(12) { 7 }
@@ -89,39 +121,44 @@ class RemediationRegressionTest {
             wrappedDekIvBase64 = b64(iv),
             kdfSaltBase64 = b64(salt),
             kdfIterations = 100_000,
-            pinVerifierBase64 = b64(verifierV1(kek, salt)),
+            pinVerifierBase64 = b64(verifierV2(kek, salt, 100_000)),
             kdfAlgorithm = VaultCryptoEngine.KDF_SHA256,
             schemaVersion = 1
         )
-        assertArrayEquals(d, VaultCryptoEngine.unwrapDekWithPin("246810".toCharArray(), wrapped))
-        assertTrue(VaultCryptoEngine.needsKdfUpgrade(wrapped))
-        assertNull(VaultCryptoEngine.unwrapDekWithPin("111111".toCharArray(), wrapped))
+        assertEquals(
+            DekUnwrapResult.UnsupportedFormat,
+            VaultCryptoEngine.unwrapDekResult("246810".toCharArray(), wrapped)
+        )
+        assertNull(VaultCryptoEngine.unwrapDekWithPin("246810".toCharArray(), wrapped))
     }
 
+    // --- v2 migration source remains readable and requests a device-binding upgrade ---
+
     @Test
-    fun `legacy v1 sha1 payload with blank algorithm unlocks`() {
+    fun `v2 payload unlocks, roundtrips and requests device binding upgrade`() {
         val d = dek()
         val salt = ByteArray(16) { (it * 5).toByte() }
         val iv = ByteArray(12) { 9 }
-        val kek = deriveKek("246810", salt, 80_000, VaultCryptoEngine.KDF_SHA1_LEGACY)
+        val kek = deriveKek("246810", salt, 120_000, VaultCryptoEngine.KDF_SHA256)
         val wrapped = WrappedDekPayload(
             wrappedDekBase64 = b64(encryptDek(d, kek, iv)),
             wrappedDekIvBase64 = b64(iv),
             kdfSaltBase64 = b64(salt),
-            kdfIterations = 80_000,
-            pinVerifierBase64 = b64(verifierV1(kek, salt)),
-            kdfAlgorithm = "",
-            schemaVersion = 1
+            kdfIterations = 120_000,
+            pinVerifierBase64 = b64(verifierV2(kek, salt, 120_000)),
+            kdfAlgorithm = VaultCryptoEngine.KDF_SHA256,
+            schemaVersion = 2
         )
         assertArrayEquals(d, VaultCryptoEngine.unwrapDekWithPin("246810".toCharArray(), wrapped))
-        assertTrue(VaultCryptoEngine.needsKdfUpgrade(wrapped))
+        assertNull(VaultCryptoEngine.unwrapDekWithPin("111111".toCharArray(), wrapped))
+        assertTrue(VaultCryptoEngine.needsVaultUpgrade(wrapped))
     }
 
-    // --- H4: v2 parameter tampering is rejected (verifier binds salt/iterations/algorithm) ---
+    // --- H4: parameter tampering is rejected (verifier binds salt/iterations/algorithm) ---
 
     @Test
-    fun `v2 payload with downgraded iterations or algorithm is rejected`() {
-        val wrapped = VaultCryptoEngine.wrapDekWithPin(dek(), "246810".toCharArray())
+    fun `payload with downgraded iterations or unsupported algorithm is rejected`() {
+        val wrapped = VaultCryptoEngine.wrapDekWithPin(dek(), "246810".toCharArray(), bindToDevice = false)
 
         assertNull(
             VaultCryptoEngine.unwrapDekWithPin(
@@ -132,20 +169,20 @@ class RemediationRegressionTest {
         assertNull(
             VaultCryptoEngine.unwrapDekWithPin(
                 "246810".toCharArray(),
-                wrapped.copy(kdfAlgorithm = VaultCryptoEngine.KDF_SHA1_LEGACY)
+                wrapped.copy(kdfAlgorithm = "PBKDF2WithHmacSHA1")
             )
         )
     }
 
-    // --- H5: crypto version selects AAD explicitly, no blind fallback ---
+    // --- H5: crypto version selects AAD explicitly, no blind fallback, v1 evicted ---
 
     @Test
-    fun `v2 ciphertext cannot be decrypted as v1 and unknown versions are rejected`() {
+    fun `v2 ciphertext cannot be decrypted without v2 declaration and unknown versions are rejected`() {
         val d = dek()
         val secrets = CardSecretsPayload(uidHex = "04:AA:BB:CC", notes = "gate")
         val enc = VaultCryptoEngine.encryptCardSecrets(d, secrets, ownerUserId = "uid_alice")
 
-        // Declaring it v1 (no AAD) must fail authentication.
+        // v1 was evicted: the version is rejected outright instead of retrying without AAD.
         assertTrue(
             runCatching {
                 VaultCryptoEngine.decryptCardSecrets(
@@ -173,29 +210,20 @@ class RemediationRegressionTest {
     }
 
     @Test
-    fun `v1 ciphertext migrates to v2 and round-trips with owner aad`() {
+    fun `v1 ciphertext is rejected after eviction`() {
         val d = dek()
         val secrets = CardSecretsPayload(uidHex = "04:11:22:33", aidHex = "F04E464353484945")
         val legacy = Aes256GcmCryptoUtil.encryptNfcCardPayload(d, secrets, ownerUserId = null)
-        val decoded = Aes256GcmCryptoUtil.decryptNfcCardPayload(
-            dek256 = d,
-            encryptedBase64 = legacy.encryptedPayloadBase64,
-            ivBase64 = legacy.payloadIvBase64,
-            ownerUserId = "uid_alice",
-            cryptoVersion = 1
-        )
-        assertEquals(secrets, decoded)
-
-        val upgraded = Aes256GcmCryptoUtil.encryptNfcCardPayload(d, decoded, ownerUserId = "uid_alice")
-        assertEquals(
-            secrets,
-            Aes256GcmCryptoUtil.decryptNfcCardPayload(
-                dek256 = d,
-                encryptedBase64 = upgraded.encryptedPayloadBase64,
-                ivBase64 = upgraded.payloadIvBase64,
-                ownerUserId = "uid_alice",
-                cryptoVersion = 2
-            )
+        assertTrue(
+            runCatching {
+                Aes256GcmCryptoUtil.decryptNfcCardPayload(
+                    dek256 = d,
+                    encryptedBase64 = legacy.encryptedPayloadBase64,
+                    ivBase64 = legacy.payloadIvBase64,
+                    ownerUserId = "uid_alice",
+                    cryptoVersion = 1
+                )
+            }.isFailure
         )
     }
 

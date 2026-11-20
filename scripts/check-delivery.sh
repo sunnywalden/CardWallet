@@ -68,13 +68,25 @@ check "firestore.rules 含 120000 迭代下限" \
 check "firestore.rules 含计数器 +1 原子规则" \
   grep -q "emulationCount + 1" firestore.rules
 
-echo "[6] 工程化"
+echo "[6] 设备绑定与 v1 淘汰(2026-11-20)"
+check "VaultCryptoEngine 含设备绑定 DeviceKeySealer 与 schema v3" \
+  bash -c 'grep -q "interface DeviceKeySealer" app/src/main/java/com/aistudio/nfcshield/crypto/VaultCryptoEngine.kt && grep -q "ANDROID_KEYSTORE" app/src/main/java/com/aistudio/nfcshield/crypto/VaultCryptoEngine.kt && grep -q "CURRENT_SCHEMA_VERSION = 3" app/src/main/java/com/aistudio/nfcshield/crypto/VaultCryptoEngine.kt'
+check "v1 verifier/解锁路径已移除" \
+  bash -c '! grep -q "computePinVerifierV1" app/src/main/java/com/aistudio/nfcshield/crypto/VaultCryptoEngine.kt && ! grep -q "KDF_SHA1_LEGACY" app/src/main/java/com/aistudio/nfcshield/crypto/VaultCryptoEngine.kt'
+check "卡密文只接受 cryptoVersion 2" \
+  grep -q "KNOWN_CRYPTO_VERSIONS = setOf(CURRENT_CRYPTO_VERSION)" app/src/main/java/com/aistudio/nfcshield/crypto/Aes256GcmCryptoUtil.kt
+check "firestore.rules 含 v3 设备绑定分支" \
+  bash -c 'grep -q "isValidVaultConfigV3" firestore.rules && grep -q "schemaVersion == 3" firestore.rules && grep -q "device-bound:v3" firestore.rules'
+check "firestore.rules 拒绝 v1 卡密文" \
+  bash -c 'grep -q "data.cryptoVersion == 2" firestore.rules && ! grep -q "cryptoVersion >= 1" firestore.rules'
+
+echo "[7] 工程化"
 check "CI 工作流存在" test -f .github/workflows/ci.yml
 check "规则测试 harness 存在" test -f package.json
 check "交付文档存在" test -f docs/delivery.md
 
 if [[ "${1:-}" == "--build" ]]; then
-  echo "[7] 单元测试"
+  echo "[8] 单元测试"
   export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home}"
   export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
   if ./gradlew testDebugUnitTest --console=plain >/tmp/cw-check-build.log 2>&1; then

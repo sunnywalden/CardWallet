@@ -396,9 +396,9 @@ if (FirebaseApp.getApps(LocalContext.current).isEmpty()) {
 ## 6. 需 owner 决策的事项
 
 1. `D2760000850101`(NDEF AID)是否继续占用(M5)。
-2. App Check 启用与 Firebase 项目配置权限(P3)。
-3. 是否要"设备密钥绑定 KEK"增强(彻底消除云端离线爆破,代价是失去纯 PIN 跨设备恢复)——本期不做,列入威胁模型讨论。
-4. v1 数据淘汰时间表。
+2. ~~App Check 启用~~ —— **2026-11-20 已强制执行(ENFORCED)**,见 delivery.md §3。
+3. ~~设备密钥绑定 KEK~~ —— **2026-11-20 已实施(schema v3)**,见 delivery.md §7。
+4. ~~v1 数据淘汰时间表~~ —— **2026-11-20 已完成**(线上审计 100% v2),见 delivery.md §8。
 5. 正式发布签名密钥(当前 release APK 为本地生成密钥,仅本地分发有效)。
 
 ---
@@ -430,4 +430,13 @@ if (FirebaseApp.getApps(LocalContext.current).isEmpty()) {
 | Firebase fail-fast | ✅ | 缺配置时友好提示屏而非崩溃 | 编译验证 |
 | 威胁模型 | ✅ | docs/threat-model.md | 文档 |
 
-**owner 阻塞项(未实施)**:App Check(需 Firebase 控制台权限)、正式签名密钥、真实 google-services.json、设备密钥绑定 KEK 增强(可选)。
+**owner 阻塞项(未实施)**:正式签名密钥、真实 google-services.json(均已由 owner 提供并接入)。
+
+## 8. 后续实施(2026-11-20)
+
+| 项 | 结果 |
+|---|---|
+| App Check 强制执行 | ✅ Firestore 服务 `enforcementMode = ENFORCED`(REST PATCH 于 service 资源,已验证);debug 包需注册调试令牌 |
+| 设备密钥绑定 KEK | ✅ vault schema v3:内层 PIN 包裹载荷 + verifier 由 AndroidKeyStore AES-256-GCM 封装;云端 doc 无法离线校验 PIN;v2 解锁后自动升级;无纯 PIN 跨设备恢复 |
+| v1 数据淘汰 | ✅ 线上审计 vault 1 条(v2)、卡片 1 条(v2)即 100%;客户端移除 SHA-1/verifier v1/无 AAD 读取与迁移;规则要求 `cryptoVersion == 2`、拒绝 schema v1 |
+| 验证 | 单元测试 38/38;规则测试 11/11;release APK 重签构建;`check-delivery.sh` 26 项全绿 |

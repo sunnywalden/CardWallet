@@ -26,9 +26,11 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // --- Vault config (schema v2 only for writes; v1 docs are upgraded by the client) ---
-    // v2 requires PBKDF2-HMAC-SHA256 with a 120k iteration floor, and the verifier binds
-    // salt/iterations/algorithm, so a session attacker cannot downgrade these parameters.
+    // --- Vault config ---
+    // v2 (legacy): PIN-wrapped DEK readable anywhere; kept only for the client's transparent
+    //     migration to v3. v3 (current): the PIN-wrapped payload + verifier live inside a
+    //     device-key seal, so the cloud document alone cannot verify PIN guesses offline.
+    // Both require PBKDF2-HMAC-SHA256 with a 120k iteration floor. v1 is rejected everywhere.
     function isValidVaultConfigV2(data, userId) {
       return data.userId is string && data.userId == userId &&
              data.wrappedDekBase64 is string && data.wrappedDekBase64.size() >= 16 && data.wrappedDekBase64.size() <= 512 &&
@@ -38,8 +40,27 @@ service cloud.firestore {
              data.kdfAlgorithm is string && data.kdfAlgorithm == 'PBKDF2WithHmacSHA256' &&
              data.pinVerifierBase64 is string && data.pinVerifierBase64.size() >= 16 && data.pinVerifierBase64.size() <= 256 &&
              data.schemaVersion is int && data.schemaVersion == 2 &&
+             !('deviceBinding' in data) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidVaultConfigV3(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.schemaVersion is int && data.schemaVersion == 3 &&
+             data.deviceBinding is string && data.deviceBinding == 'ANDROID_KEYSTORE' &&
+             data.wrappedDekBase64 is string && data.wrappedDekBase64.size() >= 64 && data.wrappedDekBase64.size() <= 1024 &&
+             data.wrappedDekIvBase64 is string && data.wrappedDekIvBase64.size() >= 8 && data.wrappedDekIvBase64.size() <= 128 &&
+             data.kdfSaltBase64 is string && data.kdfSaltBase64.size() >= 8 && data.kdfSaltBase64.size() <= 128 &&
+             data.kdfIterations is int && data.kdfIterations >= 120000 && data.kdfIterations <= 1000000 &&
+             data.kdfAlgorithm is string && data.kdfAlgorithm == 'PBKDF2WithHmacSHA256' &&
+             data.pinVerifierBase64 is string && data.pinVerifierBase64 == 'device-bound:v3' &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidVaultConfig(data, userId) {
+      return isValidVaultConfigV2(data, userId) || isValidVaultConfigV3(data, userId);
     }
 
     function isValidCategory(category) {
@@ -66,7 +87,9 @@ service cloud.firestore {
              data.encryptedPayloadBase64 is string && data.encryptedPayloadBase64.size() >= 16 && data.encryptedPayloadBase64.size() <= 8192 &&
              data.payloadIvBase64 is string && data.payloadIvBase64.size() >= 8 && data.payloadIvBase64.size() <= 64 &&
              data.emulationCount is int && data.emulationCount >= 0 && data.emulationCount <= 1000000 &&
-             (!('cryptoVersion' in data) || (data.cryptoVersion is int && data.cryptoVersion >= 1 && data.cryptoVersion <= 2)) &&
+// v1 (no-AAD) card support was removed on 2026-11-20 after the live audit
+             // showed 100% v2; documents without cryptoVersion are no longer writable.
+             data.cryptoVersion is int && data.cryptoVersion == 2 &&
              (!('lastEmulatedAt' in data) || data.lastEmulatedAt == null || (data.lastEmulatedAt is timestamp && data.lastEmulatedAt <= request.time)) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -78,16 +101,17 @@ service cloud.firestore {
 
       allow create: if isOwner(userId) &&
                        configId == 'config' &&
-                       incoming().keys().hasOnly(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'kdfAlgorithm', 'pinVerifierBase64', 'schemaVersion', 'createdAt', 'updatedAt']) &&
-                       isValidVaultConfigV2(incoming(), userId);
+                       incoming().keys().hasOnly(['userId', 'wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'kdfAlgorithm', 'pinVerifierBase64', 'schemaVersion', 'deviceBinding', 'createdAt', 'updatedAt']) &&
+                       isValidVaultConfig(incoming(), userId);
 
-      // The only legal transition for a v1 document is a full v2 rewrite.
+      // v2 -> v3 is a full rewrite; schemaVersion may only move forward (v1 docs are dead).
       allow update: if isOwner(userId) &&
                        configId == 'config' &&
-                       isValidVaultConfigV2(incoming(), userId) &&
+                       isValidVaultConfig(incoming(), userId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'kdfAlgorithm', 'pinVerifierBase64', 'schemaVersion', 'updatedAt']);
+                       incoming().schemaVersion >= existing().schemaVersion &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['wrappedDekBase64', 'wrappedDekIvBase64', 'kdfSaltBase64', 'kdfIterations', 'kdfAlgorithm', 'pinVerifierBase64', 'schemaVersion', 'deviceBinding', 'updatedAt']);
 
       allow delete: if isOwner(userId) && configId == 'config';
     }

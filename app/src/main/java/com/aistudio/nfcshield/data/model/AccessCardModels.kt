@@ -141,6 +141,8 @@ data class VaultConfigDoc(
     val pinVerifierBase64: String = "",
     val kdfAlgorithm: String = "PBKDF2WithHmacSHA256",
     val schemaVersion: Long = 2L,
+    /** "ANDROID_KEYSTORE" for schema v3 device-bound vaults; null/absent for legacy v2. */
+    val deviceBinding: String? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
