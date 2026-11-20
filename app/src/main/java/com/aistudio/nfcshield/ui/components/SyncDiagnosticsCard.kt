@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.aistudio.nfcshield.BuildConfig
 import com.aistudio.nfcshield.data.remote.SyncDiagnosticReport
 import com.aistudio.nfcshield.data.remote.SyncProbeStatus
+import com.aistudio.nfcshield.data.remote.toDiagnosticText
 import com.aistudio.nfcshield.ui.theme.JetBrainsMonoFontFamily
 import com.aistudio.nfcshield.ui.theme.VaultAmber
 import com.aistudio.nfcshield.ui.theme.VaultCyan
@@ -64,6 +65,8 @@ fun SyncDiagnosticsCard(
     modifier: Modifier = Modifier,
     showRetryButton: Boolean = true
 ) {
+    val clipboard = LocalClipboardManager.current
+    var copiedReport by remember(report) { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = VaultSurface,
@@ -80,6 +83,17 @@ fun SyncDiagnosticsCard(
                 text = "云端同步诊断",
                 style = MaterialTheme.typography.titleSmall,
                 color = VaultTextPrimary
+            )
+            Text(
+                text = if (BuildConfig.DEBUG) {
+                    "构建: Debug · App Check Debug Provider"
+                } else {
+                    "构建: Release · Play Integrity"
+                },
+                fontFamily = JetBrainsMonoFontFamily,
+                style = MaterialTheme.typography.labelSmall,
+                color = VaultTextSecondary,
+                modifier = Modifier.testTag("sync_diag_build")
             )
             ProbeRow(
                 label = "Google 登录会话",
@@ -118,6 +132,33 @@ fun SyncDiagnosticsCard(
                         color = VaultAmber
                     )
                 }
+            }
+
+            // Debug builds surface the raw attestation error; release users can copy the
+            // report (which includes it) for support without exposing it on screen.
+            val detail = report?.appCheckDetail
+            if (BuildConfig.DEBUG && !detail.isNullOrBlank()) {
+                Text(
+                    text = "App Check 详情: ${detail.take(240)}",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = VaultTextSecondary,
+                    modifier = Modifier.testTag("sync_diag_appcheck_detail")
+                )
+            }
+
+            TextButton(
+                onClick = {
+                    val snapshot = report
+                    if (snapshot != null) {
+                        clipboard.setText(AnnotatedString(snapshot.toDiagnosticText()))
+                        copiedReport = true
+                    }
+                },
+                enabled = report != null,
+                modifier = Modifier.testTag("sync_diag_copy_report")
+            ) {
+                Text(if (copiedReport) "诊断信息已复制" else "复制诊断信息")
             }
 
             val debugInfo = report?.debugTokenInfo

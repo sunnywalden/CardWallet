@@ -100,6 +100,8 @@ class VaultLockScreenErrorRecoveryTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("sync_diag_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync_diag_build").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync_diag_copy_report").assertIsDisplayed()
         composeRule.onNodeWithTag("sync_diag_auth").assertIsDisplayed()
         composeRule.onNodeWithTag("sync_diag_appcheck").assertIsDisplayed()
         composeRule.onNodeWithTag("sync_diag_network").assertIsDisplayed()

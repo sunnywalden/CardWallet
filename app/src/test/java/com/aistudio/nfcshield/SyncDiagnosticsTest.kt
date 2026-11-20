@@ -1,12 +1,15 @@
 package com.aistudio.nfcshield
 
+import com.aistudio.nfcshield.data.remote.AppCheckDebugTokenInfo
 import com.aistudio.nfcshield.data.remote.AppCheckDebugTokenResolver
 import com.aistudio.nfcshield.data.remote.AppCheckDebugTokenSource
 import com.aistudio.nfcshield.data.remote.AppCheckFailureKind
 import com.aistudio.nfcshield.data.remote.CredentialRefreshResult
+import com.aistudio.nfcshield.data.remote.SyncDiagnosticReport
 import com.aistudio.nfcshield.data.remote.SyncProbeStatus
 import com.aistudio.nfcshield.data.remote.classifyAppCheckFailure
 import com.aistudio.nfcshield.data.remote.classifyAuthFailure
+import com.aistudio.nfcshield.data.remote.toDiagnosticText
 import com.aistudio.nfcshield.data.remote.toSyncDiagnosticReport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -36,6 +39,65 @@ class SyncDiagnosticsTest {
             AppCheckFailureKind.PLAY_INTEGRITY_FAILED,
             classifyAppCheckFailure(error, debugBuild = false)
         )
+    }
+
+    @Test
+    fun `classifies Play Integrity service errors and sideload recognition failures`() {
+        val integrity = IllegalStateException(
+            "com.google.android.play.core.integrity.IntegrityServiceException: -10006: Integrity API error."
+        )
+        assertEquals(
+            AppCheckFailureKind.PLAY_INTEGRITY_FAILED,
+            classifyAppCheckFailure(integrity, debugBuild = false)
+        )
+        assertEquals(
+            AppCheckFailureKind.PLAY_INTEGRITY_FAILED,
+            classifyAppCheckFailure(
+                IOException("The app is not installed by Play and returned UNRECOGNIZED_VERSION"),
+                debugBuild = false
+            )
+        )
+    }
+
+    @Test
+    fun `debug build classifies a 403 exchange as an unregistered token`() {
+        val error = IOException(
+            "Error returned from API. code: 403 body: {\"error\":{\"message\":\"denied\"}}"
+        )
+        assertEquals(
+            AppCheckFailureKind.DEBUG_TOKEN_UNREGISTERED,
+            classifyAppCheckFailure(error, debugBuild = true)
+        )
+        // The same 403 in release is an attestation/config problem, not a debug token.
+        assertEquals(
+            AppCheckFailureKind.CONFIGURATION,
+            classifyAppCheckFailure(error, debugBuild = false)
+        )
+    }
+
+    @Test
+    fun `diagnostic text includes build type, classifications and never the debug token`() {
+        val report = SyncDiagnosticReport(
+            authStatus = SyncProbeStatus.OK,
+            authDetail = null,
+            appCheckStatus = SyncProbeStatus.FAILED,
+            appCheckFailure = AppCheckFailureKind.PLAY_INTEGRITY_FAILED,
+            appCheckDetail = "IntegrityServiceException: -10006",
+            networkAvailable = true,
+            firestoreCode = "PERMISSION_DENIED",
+            capturedAtMillis = 1_700_000_000_000L,
+            debugTokenInfo = AppCheckDebugTokenInfo(
+                token = "secret-debug-token-value",
+                source = AppCheckDebugTokenSource.SECRETS
+            ),
+            debugBuild = false
+        )
+        val text = report.toDiagnosticText()
+        assertTrue(text.contains("Release / Play Integrity"))
+        assertTrue(text.contains("PLAY_INTEGRITY_FAILED"))
+        assertTrue(text.contains("PERMISSION_DENIED"))
+        assertTrue(text.contains("IntegrityServiceException"))
+        assertTrue(!text.contains("secret-debug-token-value"))
     }
 
     @Test
