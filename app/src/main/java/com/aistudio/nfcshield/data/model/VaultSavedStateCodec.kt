@@ -92,6 +92,9 @@ object VaultSavedStateCodec {
         put("pinVerifierBase64", config.pinVerifierBase64)
         put("kdfAlgorithm", config.kdfAlgorithm)
         put("schemaVersion", config.schemaVersion)
+        // Schema v3 device binding must survive state restoration/caching, otherwise the
+        // restored config is misclassified as unsupported after process death or cold start.
+        config.deviceBinding?.takeIf { it.isNotBlank() }?.let { put("deviceBinding", it) }
         putTimestamp("createdAt", config.createdAt)
         putTimestamp("updatedAt", config.updatedAt)
     }.toString()
@@ -113,6 +116,7 @@ object VaultSavedStateCodec {
                 pinVerifierBase64 = obj.optString("pinVerifierBase64", ""),
                 kdfAlgorithm = obj.optString("kdfAlgorithm", "PBKDF2WithHmacSHA256"),
                 schemaVersion = obj.optLong("schemaVersion", 2L),
+                deviceBinding = obj.optString("deviceBinding", "").takeIf { it.isNotBlank() },
                 createdAt = obj.optTimestamp("createdAt"),
                 updatedAt = obj.optTimestamp("updatedAt")
             )

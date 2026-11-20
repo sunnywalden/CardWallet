@@ -2,6 +2,7 @@ package com.aistudio.nfcshield.data.remote
 
 import android.content.Context
 import android.util.Log
+import com.aistudio.nfcshield.BuildConfig
 import com.aistudio.nfcshield.R
 import com.aistudio.nfcshield.crypto.WrappedDekPayload
 import com.aistudio.nfcshield.data.model.CardAccentColor
@@ -32,12 +33,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 class FirestoreVaultRepository(
     private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = Firebase.auth
+    private val auth: FirebaseAuth = Firebase.auth,
+    private val networkProbe: () -> Boolean = { true }
 ) {
     constructor(context: Context) : this(
         FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        ),
+        Firebase.auth,
+        { NetworkStatus.isAvailable(context.applicationContext) }
     )
 
     private fun requireUserId(expectedUserId: String? = null): String {
@@ -49,48 +53,79 @@ class FirestoreVaultRepository(
         return uid
     }
 
+    fun networkAvailable(): Boolean = runCatching { networkProbe() }.getOrDefault(true)
+
     /**
-     * Proactively refreshes Firebase Auth ID token and Firebase App Check token.
-     * Prevents transient PERMISSION_DENIED errors when the app resumes after device lock/sleep
-     * and the cached token expired while the process was suspended.
+     * Proactively refreshes Firebase Auth ID token and Firebase App Check token, returning a
+     * classified result for the sync diagnostics UI. Prevents transient PERMISSION_DENIED
+     * errors when the app resumes after device lock/sleep and the cached token expired while
+     * the process was suspended (Doze / Play Integrity round-trips can take several seconds).
      */
-    suspend fun refreshSessionCredentials(forceRefresh: Boolean = true): Boolean {
-        val user = auth.currentUser ?: return false
-        var authRefreshed = false
-        try {
-            val tokenResult = withTimeoutOrNull(TOKEN_REFRESH_TIMEOUT_MS) {
-                user.getIdToken(forceRefresh).await()
-            }
-            authRefreshed = tokenResult?.token?.isNotBlank() == true
-            if (!authRefreshed) {
+    suspend fun refreshSessionCredentials(forceRefresh: Boolean = true): CredentialRefreshResult {
+        val capturedAt = System.currentTimeMillis()
+        val network = networkAvailable()
+        val user = auth.currentUser
+
+        var authOk = false
+        var authError: String? = null
+        if (user == null) {
+            authError = "未登录 Google 账号"
+        } else {
+            try {
+                val tokenResult = withTimeoutOrNull(TOKEN_REFRESH_TIMEOUT_MS) {
+                    user.getIdToken(forceRefresh).await()
+                }
+                authOk = tokenResult?.token?.isNotBlank() == true
+                if (!authOk) {
+                    authError = "Auth 令牌刷新超时（${TOKEN_REFRESH_TIMEOUT_MS / 1000} 秒）"
+                    Log.w(
+                        SYNC_LOG_TAG,
+                        "Auth ID token refresh timed out or returned blank (forceRefresh=$forceRefresh, uidHash=${hashUidPrefix(user.uid)})"
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                authError = classifyAuthFailure(e)
                 Log.w(
                     SYNC_LOG_TAG,
-                    "Auth ID token refresh timed out or returned blank (forceRefresh=$forceRefresh, uidHash=${hashUidPrefix(user.uid)})"
+                    "Auth ID token refresh failed (forceRefresh=$forceRefresh, uidHash=${hashUidPrefix(user.uid)}, type=${e.javaClass.simpleName})"
                 )
+            }
+        }
+
+        var appCheckOk = false
+        var appCheckFailure = AppCheckFailureKind.NONE
+        var appCheckError: String? = null
+        try {
+            val token = withTimeoutOrNull(TOKEN_REFRESH_TIMEOUT_MS) {
+                FirebaseAppCheck.getInstance().getAppCheckToken(forceRefresh).await()
+            }
+            appCheckOk = token?.token?.isNotBlank() == true
+            if (!appCheckOk) {
+                appCheckFailure = AppCheckFailureKind.NETWORK
+                appCheckError = "App Check 令牌刷新超时（${TOKEN_REFRESH_TIMEOUT_MS / 1000} 秒）"
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(
+            appCheckFailure = classifyAppCheckFailure(e, BuildConfig.DEBUG)
+            appCheckError = e.message
+            Log.w(
                 SYNC_LOG_TAG,
-                "Auth ID token refresh failed (forceRefresh=$forceRefresh, uidHash=${hashUidPrefix(user.uid)}): ${e.message}",
-                e
+                "App Check token refresh failed (forceRefresh=$forceRefresh, kind=$appCheckFailure, type=${e.javaClass.simpleName})"
             )
         }
 
-        try {
-            withTimeoutOrNull(TOKEN_REFRESH_TIMEOUT_MS) {
-                FirebaseAppCheck.getInstance().getAppCheckToken(forceRefresh).await()
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(
-                SYNC_LOG_TAG,
-                "App Check token refresh warning (forceRefresh=$forceRefresh): ${e.message}"
-            )
-        }
-        return authRefreshed
+        return CredentialRefreshResult(
+            authOk = authOk,
+            authError = authError,
+            appCheckOk = appCheckOk,
+            appCheckFailure = appCheckFailure,
+            appCheckError = appCheckError,
+            networkAvailable = network,
+            capturedAtMillis = capturedAt
+        )
     }
 
     private fun isRecoverableResumeError(error: Throwable): FirebaseFirestoreException? {
@@ -130,7 +165,7 @@ class FirestoreVaultRepository(
                 recoverable
             )
             refreshSessionCredentials(forceRefresh = true)
-            delay((attempt + 1) * RETRY_BASE_DELAY_MS)
+            delay(RETRY_BASE_DELAY_MS shl attempt.toInt())
             true
         } else {
             false
@@ -227,7 +262,7 @@ class FirestoreVaultRepository(
                 recoverable
             )
             refreshSessionCredentials(forceRefresh = true)
-            delay((attempt + 1) * RETRY_BASE_DELAY_MS)
+            delay(RETRY_BASE_DELAY_MS shl attempt.toInt())
             true
         } else {
             false
@@ -702,8 +737,8 @@ class FirestoreVaultRepository(
 
     companion object {
         private const val SYNC_LOG_TAG = "VaultSync"
-        private const val MAX_STREAM_RETRIES = 3L
-        private const val RETRY_BASE_DELAY_MS = 750L
-        private const val TOKEN_REFRESH_TIMEOUT_MS = 4000L
+        private const val MAX_STREAM_RETRIES = 4L
+        private const val RETRY_BASE_DELAY_MS = 1000L
+        private const val TOKEN_REFRESH_TIMEOUT_MS = 10_000L
     }
 }

@@ -81,3 +81,17 @@ v2 密文以 `shield-nfc:card:v2:{uid}` 为 AAD,移植到其他 uid 下 GCM 认�
 1. ~~设备密钥绑定 KEK~~ —— 已于 2026-11-20 实施(schema v3)。
 2. ~~App Check(Play Integrity)启用~~ —— 已于 2026-11-20 强制(ENFORCED)。
 3. NDEF 标准 AID(`D2760000850101`)是否继续占用(仍未决)。
+## 6. 离线缓存与调试令牌(2026-11-20 新增)
+
+### T8 本地加密缓存
+- 本地 DataStore 仅保存与云端完全一致的密文(vault config 含 v3 deviceBinding + 卡片密文),
+  按账号隔离;解锁仍需 PIN 或认证绑定生物识别解出 DEK。
+- 登出/切换账号即清除;空快照不会覆盖已有缓存。
+- 残余风险:已解锁进程内的代码可调用 Keystore 解封(与在线状态相同的信任边界);
+  设备密钥仅在本机,缓存被拷走也无法在别的设备解密。
+
+### T9 调试令牌
+- App Check Debug Token 仅存在于 **debug 构建**:AI Studio Secrets / 启动 Intent 注入,
+  安装前同步写入 SDK 调试存储;Release 变体 BuildConfig 恒为空且 `activeDebugTokenInfo()` 返回 null。
+- 诊断 UI 在 debug 下展示并允许复制该令牌(用途即注册到 Console);日志只记录来源与长度,不打印令牌。
+- 令牌是临时凭证:调试结束后应在 Firebase Console / CLI 撤销;禁止提交到源码或分享。

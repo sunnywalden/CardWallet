@@ -1,6 +1,9 @@
 package com.aistudio.nfcshield.ui
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -69,6 +72,7 @@ import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.aistudio.nfcshield.AppCheckInstaller
 import com.aistudio.nfcshield.FirebaseBootstrap
 import com.aistudio.nfcshield.R
 import com.aistudio.nfcshield.auth.GoogleAuthHelper
@@ -95,7 +99,6 @@ import com.aistudio.nfcshield.ui.viewmodel.VaultViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
 
 /**
@@ -152,13 +155,12 @@ private fun AuthenticatedVaultHost(
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
                 VaultViewModel(
-                    repository = FirestoreVaultRepository(db),
+                    repository = FirestoreVaultRepository(app),
                     localStore = LocalVaultStore(app),
                     currentUserId = uid,
-                    savedStateHandle = createSavedStateHandle()
+                    savedStateHandle = createSavedStateHandle(),
+                    debugTokenProvider = { AppCheckInstaller.activeDebugTokenInfo(app) }
                 )
             }
         }
@@ -170,6 +172,8 @@ private fun AuthenticatedVaultHost(
     val recentHceEvents by viewModel.recentHceEvents.collectAsStateWithLifecycle()
     val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
     val biometricSealMode by viewModel.biometricSealMode.collectAsStateWithLifecycle()
+    val cloudSyncIssue by viewModel.cloudSyncIssue.collectAsStateWithLifecycle()
+    val isRetryingSync by viewModel.isRetryingSync.collectAsStateWithLifecycle()
 
     val liveNfcStatus by rememberLiveNfcStatus()
     var manualNfcStatusOverride by remember { mutableStateOf<com.aistudio.nfcshield.nfc.NfcHardwareStatus?>(null) }
@@ -206,6 +210,24 @@ private fun AuthenticatedVaultHost(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Auto-recover cloud sync as soon as connectivity returns (no manual retry needed).
+    DisposableEffect(context, viewModel) {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        var callback: ConnectivityManager.NetworkCallback? = null
+        if (manager != null) {
+            val networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    viewModel.onNetworkRestored()
+                }
+            }
+            runCatching { manager.registerDefaultNetworkCallback(networkCallback) }
+                .onSuccess { callback = networkCallback }
+        }
+        onDispose {
+            callback?.let { runCatching { manager?.unregisterNetworkCallback(it) } }
+        }
     }
 
     val performSignOut: () -> Unit = {
@@ -270,7 +292,9 @@ private fun AuthenticatedVaultHost(
             },
             onClearError = { viewModel.clearPinError() },
             onSignOut = performSignOut,
-            onRetrySync = { viewModel.retryCloudSync() }
+            onRetrySync = { viewModel.retryCloudSync() },
+            syncDiagnostic = cloudSyncIssue,
+            isRetryingSync = isRetryingSync
         )
         return
     }
@@ -505,6 +529,8 @@ private fun AuthenticatedVaultHost(
                                             }
                                         },
                                         onRetrySync = { viewModel.retryCloudSync() },
+                                        syncIssue = cloudSyncIssue,
+                                        isRetryingSync = isRetryingSync,
                                         onNavigateToScan = {
                                             physicalScanRequestNonce++
                                             viewModel.setActiveTabKey(VaultTab.SCAN.name)

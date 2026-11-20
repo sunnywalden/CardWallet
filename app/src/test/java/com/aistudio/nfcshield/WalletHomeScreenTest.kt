@@ -15,6 +15,9 @@ import com.aistudio.nfcshield.data.model.CardSecretsPayload
 import com.aistudio.nfcshield.data.model.DecryptedAccessCard
 import com.aistudio.nfcshield.data.model.NfcTechType
 import com.aistudio.nfcshield.data.model.UiState
+import com.aistudio.nfcshield.data.remote.AppCheckFailureKind
+import com.aistudio.nfcshield.data.remote.SyncDiagnosticReport
+import com.aistudio.nfcshield.data.remote.SyncProbeStatus
 import com.aistudio.nfcshield.nfc.NfcHardwareStatus
 import com.aistudio.nfcshield.ui.screens.WalletHomeScreen
 import com.aistudio.nfcshield.ui.theme.ObsidianTheme
@@ -105,6 +108,48 @@ class WalletHomeScreenTest {
         // Clicking hero card opens detail
         composeRule.onNodeWithTag("access_card_hero-1").performClick()
         assertEquals("hero-1", clickedCardId)
+    }
+
+    @Test
+    fun `offline banner appears with local cache and opens the diagnostics dialog`() {
+        var retries = 0
+        val report = SyncDiagnosticReport(
+            authStatus = SyncProbeStatus.OK,
+            authDetail = null,
+            appCheckStatus = SyncProbeStatus.FAILED,
+            appCheckFailure = AppCheckFailureKind.NETWORK,
+            appCheckDetail = "timeout",
+            networkAvailable = true,
+            firestoreCode = "UNAVAILABLE",
+            capturedAtMillis = 1L
+        )
+
+        composeRule.setContent {
+            ObsidianTheme {
+                WalletHomeScreen(
+                    cardsState = UiState.Success(listOf(sampleCard(id = "hero-1", label = "总部工牌", activeHce = true))),
+                    nfcStatus = readyNfcStatus,
+                    recentTapEvents = emptyList(),
+                    onCardClick = {},
+                    onToggleHce = {},
+                    onRetrySync = { retries++ },
+                    syncIssue = report,
+                    onNavigateToScan = {},
+                    onOpenNfcSettings = {},
+                    onLockVaultNow = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("offline_sync_banner").assertIsDisplayed()
+        composeRule.onNodeWithTag("offline_sync_retry").performClick()
+        assertEquals(1, retries)
+
+        composeRule.onNodeWithTag("offline_sync_details").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("sync_diagnostics_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync_diag_appcheck").assertIsDisplayed()
     }
 
     @Test

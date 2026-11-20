@@ -1,6 +1,10 @@
 package com.aistudio.nfcshield
 
+import android.app.Application
+import android.content.Intent
 import androidx.lifecycle.SavedStateHandle
+import androidx.test.core.app.ApplicationProvider
+import com.aistudio.nfcshield.data.local.LocalVaultStore
 import com.aistudio.nfcshield.data.model.CardAccentColor
 import com.aistudio.nfcshield.data.model.CardCategory
 import com.aistudio.nfcshield.data.model.CardSecretsPayload
@@ -14,6 +18,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
@@ -82,6 +87,30 @@ class VaultSavedStateAndLifecycleTest {
     }
 
     @Test
+    fun `VaultSavedStateCodec preserves schema v3 deviceBinding across restore`() {
+        val config = VaultConfigDoc(
+            id = "config",
+            userId = "uid-v3",
+            wrappedDekBase64 = "ZGV2aWNlLXNlYWxlZC1wYXlsb2Fk",
+            wrappedDekIvBase64 = "MTIzNDU2Nzg5MDEy",
+            kdfSaltBase64 = "c2FsdC1iYXNlNjQ=",
+            kdfIterations = 120000L,
+            pinVerifierBase64 = "device-bound:v3",
+            kdfAlgorithm = "PBKDF2WithHmacSHA256",
+            schemaVersion = 3L,
+            deviceBinding = "ANDROID_KEYSTORE"
+        )
+
+        val restored = VaultSavedStateCodec.decodeVaultConfig(
+            VaultSavedStateCodec.encodeVaultConfig(config)
+        )
+
+        assertNotNull(restored)
+        assertEquals(3L, restored!!.schemaVersion)
+        assertEquals("ANDROID_KEYSTORE", restored.deviceBinding)
+    }
+
+    @Test
     fun `VaultSavedStateCodec bounds payload size and safely rejects corrupt json`() {
         val hugeCards = (1..120).map { i ->
             EncryptedCardDoc(
@@ -114,6 +143,70 @@ class VaultSavedStateAndLifecycleTest {
         controller
             .pause()
             .stop()
+            .start()
+            .resume()
+            .pause()
+            .stop()
+            .destroy()
+    }
+
+    @Test
+    fun `offline encrypted cache is per-account, keeps ciphertext and never wipes on empty snapshots`() =
+        runBlocking {
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            val store = LocalVaultStore(app)
+            store.clearSensitiveLocalSession()
+
+            val config = VaultConfigDoc(
+                id = "config",
+                userId = "uid-cache-a",
+                wrappedDekBase64 = "ZGV2aWNlLXNlYWxlZC1wYXlsb2Fk",
+                wrappedDekIvBase64 = "MTIzNDU2Nzg5MDEy",
+                kdfSaltBase64 = "c2FsdC1iYXNlNjQ=",
+                kdfIterations = 120000L,
+                pinVerifierBase64 = "device-bound:v3",
+                schemaVersion = 3L,
+                deviceBinding = "ANDROID_KEYSTORE"
+            )
+            val card = EncryptedCardDoc(
+                id = "card-1",
+                userId = "uid-cache-a",
+                label = "南门门禁",
+                encryptedPayloadBase64 = "Q0lQSEVSVEVYVA==",
+                payloadIvBase64 = "MTIzNDU2Nzg5MDEy",
+                cryptoVersion = 2L
+            )
+
+            store.saveCachedVaultConfig("uid-cache-a", config)
+            store.saveCachedCards("uid-cache-a", listOf(card))
+
+            val snapshot = store.readEncryptedVaultCache("uid-cache-a")
+            assertNotNull(snapshot)
+            assertEquals("ANDROID_KEYSTORE", snapshot!!.config?.deviceBinding)
+            assertEquals(1, snapshot.cards.size)
+            // Ciphertext only — the cache never stores decrypted notes/UID.
+            assertEquals("Q0lQSEVSVEVYVA==", snapshot.cards.first().encryptedPayloadBase64)
+
+            // Empty Firestore snapshots must not wipe a populated offline cache.
+            store.saveCachedCards("uid-cache-a", emptyList())
+            assertEquals(1, store.readEncryptedVaultCache("uid-cache-a")!!.cards.size)
+
+            // Another account can never read this cache, and its first write resets the slot.
+            assertNull(store.readEncryptedVaultCache("uid-cache-b"))
+            store.saveCachedVaultConfig("uid-cache-b", config.copy(userId = "uid-cache-b"))
+            assertNull(store.readEncryptedVaultCache("uid-cache-a"))
+
+            store.clearSensitiveLocalSession()
+            assertNull(store.readEncryptedVaultCache("uid-cache-b"))
+        }
+
+    @Test
+    fun `MainActivity accepts an App Check debug token intent extra without crashing`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val intent = Intent(app, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_APPCHECK_DEBUG_TOKEN, "11111111-2222-3333-4444-555555555555")
+        Robolectric.buildActivity(MainActivity::class.java, intent)
+            .create()
             .start()
             .resume()
             .pause()

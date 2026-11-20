@@ -439,4 +439,4 @@ if (FirebaseApp.getApps(LocalContext.current).isEmpty()) {
 | App Check 强制执行 | ✅ Firestore 服务 `enforcementMode = ENFORCED`(REST PATCH 于 service 资源,已验证);debug 包需注册调试令牌 |
 | 设备密钥绑定 KEK | ✅ vault schema v3:内层 PIN 包裹载荷 + verifier 由 AndroidKeyStore AES-256-GCM 封装;云端 doc 无法离线校验 PIN;v2 解锁后自动升级;无纯 PIN 跨设备恢复 |
 | v1 数据淘汰 | ✅ 线上审计 vault 1 条(v2)、卡片 1 条(v2)即 100%;客户端移除 SHA-1/verifier v1/无 AAD 读取与迁移;规则要求 `cryptoVersion == 2`、拒绝 schema v1 |
-| 验证 | 单元测试 38/38;规则测试 11/11;release APK 重签构建;`check-delivery.sh` 26 项全绿 |
+| 验证 | 单元测试 62/62;规则测试 11/11;release APK 重签构建;`check-delivery.sh` 33 项全绿 |

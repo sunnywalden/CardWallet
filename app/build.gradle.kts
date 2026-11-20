@@ -8,6 +8,23 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+/**
+ * Reads a value from the AI Studio Secrets-backed .env file.
+ * Used only to bake the App Check debug token into DEBUG builds; release stays empty.
+ */
+fun envValue(key: String): String {
+  val envFile = rootProject.file(".env")
+  if (!envFile.isFile) return ""
+  val line = envFile.useLines { lines ->
+    lines.map { it.trim() }.firstOrNull { it.startsWith("$key=") }
+  } ?: return ""
+  return line.substringAfter('=').trim().removeSurrounding("\"").removeSurrounding("'")
+}
+
+val appCheckDebugToken = envValue("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  .replace("\\", "\\\\")
+  .replace("\"", "\\\"")
+
 android {
   namespace = "com.aistudio.nfcshield"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -48,11 +65,15 @@ android {
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("release")
+      // Release APKs must never carry a debug App Check token.
+      buildConfigField("String", "APPCHECK_DEBUG_TOKEN", "\"\"")
     }
     debug {
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
+      // Injected from AI Studio Secrets (.env). Empty when unset; an Intent extra can override it.
+      buildConfigField("String", "APPCHECK_DEBUG_TOKEN", "\"$appCheckDebugToken\"")
     }
   }
   compileOptions {
