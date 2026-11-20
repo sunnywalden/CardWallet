@@ -39,27 +39,31 @@
 
 - **Play Integrity 已配置**:release 证书 SHA-256(`f3c3d1c0…4527`)已注册到应用;`minDeviceRecognitionLevel = MEETS_DEVICE_INTEGRITY`(拒绝 root/篡改设备)。
 - 代码接入:release 用 `PlayIntegrityAppCheckProviderFactory`,debug 用 `DebugAppCheckProviderFactory`(分 source set)。
-- **强制执行已开启(ENFORCED,2026-11-20 15:58 UTC,已验证)**:
-  - 服务:`services/firestore.googleapis.com` → `enforcementMode = ENFORCED`。
-  - 生效 API 为 **service 资源本身的 PATCH**;公开 App Check REST API 没有
+- **当前状态(临时):UNENFORCED(2026-11-20 16:51 UTC,已验证)**
+  - 原因:侧载安装的 Release 包无法稳定通过 Play Integrity(服务端要求
+    `minDeviceRecognitionLevel = MEETS_DEVICE_INTEGRITY`),Firestore 被拒并阻塞解锁。
+    为恢复可用性临时关闭强制执行。
+  - 风险:App Check 不再拦截无证明客户端;Firestore 规则仍按 uid 隔离数据,
+    但项目存在配额/计费被滥用的风险。**仅作为临时措施**。
+  - **恢复命令(Play 内测/正式分发后立即执行)**:
+    ```bash
+    curl -X PATCH \
+      "https://firebaseappcheck.googleapis.com/v1/projects/gen-lang-client-0191001573/services/firestore.googleapis.com?updateMask=enforcementMode" \
+      -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+      -d '{"enforcementMode": "ENFORCED"}'
+    ```
+  - 历史:2026-11-20 15:58 UTC 曾启用 ENFORCED(状态已复核),同日 16:51 UTC 按 owner
+    决策临时关闭。生效 API 为 **service 资源本身的 PATCH**;公开 App Check REST API 没有
     `…/appCheckConfig` 子资源(该路径 404,v1Beta 文档中的示例 curl 不可用)。
   - 查询/复核:
     ```bash
     curl -H "Authorization: Bearer <token>" \
       "https://firebaseappcheck.googleapis.com/v1/projects/gen-lang-client-0191001573/services/firestore.googleapis.com"
     ```
-  - 关闭(应急回滚):
-    ```bash
-    curl -X PATCH \
-      "https://firebaseappcheck.googleapis.com/v1/projects/gen-lang-client-0191001573/services/firestore.googleapis.com?updateMask=enforcementMode" \
-      -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-      -d '{"enforcementMode": "UNENFORCED"}'
-    ```
-- **强制执行后的影响**:
-  - release 构建(Play Integrity)正常访问。
-  - **debug 构建**必须在 Firebase Console → App Check → 应用 → 管理调试令牌 注册
-    logcat 首次打印的 debug token,否则 Firestore 请求全部被拒。
-  - AI Studio Web 预览等非 Android 客户端不再能访问 Firestore(唯一受影响的既有场景,已接受)。
+- **启用强制执行时的影响**:
+  - release 构建(Play Integrity)需通过 **Play 分发**(内测/正式);侧载 Release 包不保证通过。
+  - **debug 构建**必须注册调试令牌(本机 `.env` 已配置,AI Studio Secrets 尚需粘贴同名键)。
+  - AI Studio Web 预览等非 Android 客户端将无法访问 Firestore。
 
 ## 4. Google 登录
 
