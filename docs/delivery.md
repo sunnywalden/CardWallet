@@ -153,3 +153,9 @@ AI Studio 重新生成代码会覆盖本地修复(已发生两次)。每次从 A
 
 **上线后操作**:将已在 Firebase Console 注册的调试令牌填入 AI Studio Secrets 面板
 (键名 `FIREBASE_APPCHECK_DEBUG_TOKEN`),Debug 构建与云端模拟器即可在 `ENFORCED` 下正常同步。
+
+**当前状态(2026-11-20)**:已通过 App Check Admin API 注册调试令牌
+`ShieldVault debug (2026-11-20)`(资源位于该 Android 应用的 debugTokens 下)。
+令牌值仅保存在本机 `.env`(权限 600,**不入库**)并已同步注入 debug BuildConfig;
+Release 构建仍为空。若需 AI Studio 云端模拟器通过校验,请将 `.env` 中的
+`FIREBASE_APPCHECK_DEBUG_TOKEN` 值粘贴到 AI Studio Secrets 面板(同名键)。
