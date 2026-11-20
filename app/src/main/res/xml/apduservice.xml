@@ -5,6 +5,7 @@
     <aid-group
         android:category="other"
         android:description="@string/hce_aid_group_description">
+        <!-- 与 HceAids.BUILTIN 保持一致(单测 HceAidsConsistencyTest 校验)。 -->
         <aid-filter android:name="F04E464353484945" />
         <aid-filter android:name="F0010203040506" />
         <aid-filter android:name="A0000002471001" />

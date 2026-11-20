@@ -1,0 +1,12 @@
+{
+  "name": "cardwallet-rules-tests",
+  "private": true,
+  "description": "Firestore security-rules test harness for CardWallet (ShieldNfcVault)",
+  "scripts": {
+    "test:rules": "firebase emulators:exec --only firestore --project demo-cardwallet \"node --test firestore.test.js\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase-tools": "^14.0.0"
+  }
+}
